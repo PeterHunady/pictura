@@ -1,328 +1,361 @@
 <template>
-  <div
-    class="dropField"
-    @dragover.prevent
-    @dragenter.prevent
-    @drop.prevent="handleDrop"
-    @click="openFilePicker"
-  >
-    <p v-if="!preview">Click or drag and drop an image here</p>
+    <div class="dropField" @dragover.prevent @dragenter.prevent @drop.prevent="handleDrop" @click="openFilePicker">
+        <p v-if="!preview">Click or drag and drop an image here</p>
 
-    <div v-else class="preview-container">
-      <img
-        ref="previewImage"
-        :src="preview"
-        alt="Preview"
-        draggable="false"
-        class="preview-img"
-      />
+        <div v-else class="preview-container">
+            <div ref="panCont" class="panzoom-container">
+                <img :key="preview" ref="imgEl" :src="preview" class="preview-img" alt="Preview" draggable="false" @load="initPanzoom"/>
+
+                <div v-if="overlayW && overlayH" class="crop-overlay" :style="overlayStyle">
+                    <div v-for="dir in dirs" :key="dir" class="handle" :class="dir" @mousedown.stop="startResize(dir, $event)"/>
+                </div>
+            </div>
+        </div>
+
+        <input type="file" ref="fileInput" accept="image/*" hidden @change="handleFileChange"/>
     </div>
-
-    <input
-      type="file"
-      ref="fileInput"
-      accept="image/png, image/jpeg, image/jpg, image/svg+xml"
-      style="display: none"
-      @change="handleFileChange"
-    />
-  </div>
-
-  <div v-if="isFullscreen" class="fullscreen-modal" @click="closeFullscreen">
-    <div class="fullscreen-container" @click.stop>
-      <button class="close-btn" @click="closeFullscreen">×</button>
-      <div class="zoom-controls">
-        <button @click="zoomIn" class="zoom-btn">+</button>
-        <button @click="zoomOut" class="zoom-btn">−</button>
-        <button @click="resetZoom" class="zoom-btn">⌂</button>
-      </div>
-      <div
-        class="image-container"
-        ref="imageContainer"
-        @mousedown="startDrag"
-        @wheel.prevent="handleWheel"
-      >
-        <img
-          :src="preview"
-          alt="Fullscreen preview"
-          ref="fullscreenImage"
-          :style="imageStyle"
-          draggable="false"
-        />
-      </div>
-    </div>
-  </div>
 </template>
 
 <script setup>
-import { ref, nextTick, computed, onMounted, onUnmounted } from 'vue'
-import panzoom from 'panzoom'
+    import { ref, nextTick, computed } from 'vue'
+    import panzoom from 'panzoom'
 
-const preview      = ref(null)
-const fileInput    = ref(null)
-const previewImage = ref(null)
-let previewPan     = null
+    const preview = ref(null)
+    const imgEl = ref(null)
+    const panCont = ref(null)
+    const fileInput = ref(null)
+    let pz = null
 
-const isFullscreen     = ref(false)
-const fullscreenImage  = ref(null)
-const imageContainer   = ref(null)
+    const overlayX = ref(0)
+    const overlayY = ref(0)
+    const overlayW = ref(0)
+    const overlayH = ref(0)
 
-const zoom        = ref(1)
-const panX        = ref(0)
-const panY        = ref(0)
-const isDragging  = ref(false)
-const dragStart   = ref({ x: 0, y: 0 })
-const panStart    = ref({ x: 0, y: 0 })
+    const initialScale = ref(1)
 
-const imageStyle = computed(() => ({
-  transform: `scale(${zoom.value}) translate(${panX.value}px, ${panY.value}px)`,
-  transformOrigin: 'center center',
-  transition: isDragging.value ? 'none' : 'transform 0.2s ease',
-  cursor: isDragging.value ? 'grabbing' : 'grab'
-}))
+    const dirs = ['nw','n','ne','e','se','s','sw','w']
+    let resizing = false,
+    resizeDir = null
+    const resizeStart = { rect:null, scale:1, origX:0, origY:0, origW:0, origH:0 }
 
-function openFilePicker() {
-  fileInput.value?.click()
-}
+    const emit = defineEmits(['update:preview','update:meta','update:overlay'])
 
-function handleFileChange(e) {
-  const file = e.target.files[0]
-  if (file) processImage(file)
-}
-
-function handleDrop(e) {
-  e.preventDefault()
-  if (e.dataTransfer.files.length) {
-    const file = Array.from(e.dataTransfer.files).find(f =>
-      f.type.startsWith('image/')
-    )
-    if (file) return processImage(file)
-  }
-  Array.from(e.dataTransfer.items).forEach(item => {
-    if (item.kind === 'string') {
-      item.getAsString(str => {
-        if (isImageUrl(str)) loadFromUrl(str)
-        else tryExtractUrl(str)
-      })
+    function openFilePicker() {
+        if (!preview.value) fileInput.value.click()
     }
-  })
-}
 
-function isImageUrl(url) {
-  return /\.(jpe?g|png|gif|svg)(\?.*)?$/i.test(url)
-}
+    function handleFileChange(e) {
+        const f = e.target.files[0]
+        if (f) loadFile(f)
+    }
 
-function tryExtractUrl(html) {
-  const imgMatch = /<img[^>]+src="?([^"\s>]+)"?/i.exec(html)
-  if (imgMatch) return loadFromUrl(imgMatch[1])
-  const urlMatch = /(https?:\/\/\S+\.(?:jpe?g|png|gif|svg)(\?\S*)?)/i.exec(html)
-  if (urlMatch) return loadFromUrl(urlMatch[1])
-}
+    function handleDrop(e) {
+        const f = [...e.dataTransfer.files].find(f => f.type.startsWith('image/'))
+        if (f) loadFile(f)
+    }
 
-async function loadFromUrl(url) {
-  try {
-    const res = await fetch(url)
-    if (!res.ok) throw new Error()
-    const blob = await res.blob()
-    processImage(blob)
-  } catch {
-    alert('Failed to load image from URL.')
-  }
-}
+    function loadFile(file) {
+        const r = new FileReader()
+        r.onload = ev => {
+            preview.value = ev.target.result
+            emit('update:preview', ev.target.result)
 
-function processImage(fileOrBlob) {
-  const reader = new FileReader()
-  reader.onload = e => {
-    preview.value = e.target.result
-    nextTick(() => {
-      if (previewPan) previewPan.dispose()
-      previewPan = panzoom(previewImage.value, {
-        maxZoom: 5,
-        minZoom: 0.5,
-        bounds: true,
-        boundsPadding: 0.1
-      })
+            const img = new Image()
+            img.src = ev.target.result
+            img.onload = () => {
+                emit('update:meta', {
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                    lastModified: file.lastModified
+                })
+                showOverlay(img.naturalWidth, img.naturalHeight, 0, 0)
+            }
+        }
+        r.readAsDataURL(file)
+    }
+
+    async function initPanzoom() {
+        await nextTick()
+        const img  = imgEl.value
+        const wrap = panCont.value.parentElement
+
+        initialScale.value = Math.min(
+            wrap.clientWidth / img.naturalWidth,
+            wrap.clientHeight / img.naturalHeight
+        )
+
+        panCont.value.style.width = `${img.naturalWidth * initialScale.value}px`
+        panCont.value.style.height = `${img.naturalHeight * initialScale.value}px`
+
+        if (pz) pz.dispose()
+        pz = panzoom(panCont.value, {
+            maxZoom: 5,
+            minZoom: 0.7,
+            bounds: true,
+            boundsPadding: 0.1
+        })
+    }
+
+    function showOverlay(w, h, x = overlayX.value, y = overlayY.value) {
+        const img = imgEl.value
+        const cw = Math.min(w, img.naturalWidth)
+        const ch = Math.min(h, img.naturalHeight)
+        const cx = Math.max(0, Math.min(x, img.naturalWidth  - cw))
+        const cy = Math.max(0, Math.min(y, img.naturalHeight - ch))
+        overlayW.value = cw
+        overlayH.value = ch
+        overlayX.value = cx
+        overlayY.value = cy
+        emit('update:overlay', { width: cw, height: ch, x: cx, y: cy })
+    }
+
+    function hideOverlay() {
+        overlayW.value = 0
+        overlayH.value = 0
+    }
+
+    function previewCropToContent() {
+        const img = imgEl.value
+        if (!img?.naturalWidth) return
+
+        const W = img.naturalWidth, H = img.naturalHeight
+        const can = Object.assign(document.createElement('canvas'), { width: W, height: H })
+        const ctx = can.getContext('2d')
+        ctx.drawImage(img, 0, 0, W, H)
+        const d = ctx.getImageData(0, 0, W, H).data
+
+        const corners = [
+            [0, 0],
+            [W - 1, 0],
+            [0, H - 1],
+            [W - 1, H - 1]
+        ]
+        
+        let bgR = 0, bgG = 0, bgB = 0
+        for (const [x, y] of corners) {
+            const i = (y * W + x) * 4
+            bgR += d[i]
+            bgG += d[i + 1]
+            bgB += d[i + 2]
+        }
+        bgR /= corners.length
+        bgG /= corners.length
+        bgB /= corners.length
+
+        let l = W, r = 0, t = H, b = 0
+        const TH = 20
+        for (let y = 0; y < H; y += 2) {
+            for (let x = 0; x < W; x += 2) {
+                const i = (y * W + x) * 4
+                const R = d[i], G = d[i + 1], B = d[i + 2], A = d[i + 3]
+                const diff =
+                    Math.abs(R - bgR) +
+                    Math.abs(G - bgG) +
+                    Math.abs(B - bgB)
+                const isBg = A < 10 || diff < TH
+                if (!isBg) {
+                    l = Math.min(l, x)
+                    r = Math.max(r, x)
+                    t = Math.min(t, y)
+                    b = Math.max(b, y)
+                }
+            }
+        }
+        if (r <= l || b <= t) return
+            const PAD = 2
+            l = Math.max(0, l - PAD)
+            t = Math.max(0, t - PAD)
+            r = Math.min(W - 1, r + PAD)
+            b = Math.min(H - 1, b + PAD)
+
+            showOverlay(r - l, b - t, l, t)
+      }
+
+
+    function cropToOverlay() {
+        const img = imgEl.value
+        if (!img?.naturalWidth) return
+
+        const c = Object.assign(document.createElement('canvas'), {
+            width: overlayW.value,
+            height: overlayH.value
+        })
+        c.getContext('2d').drawImage(img, overlayX.value, overlayY.value, overlayW.value, overlayH.value, 0, 0, overlayW.value, overlayH.value)
+
+        const newSrc = c.toDataURL('image/png')
+        const newW = overlayW.value
+        const newH = overlayH.value
+
+        preview.value = newSrc
+        emit('update:preview', newSrc)
+
+        overlayX.value = 0
+        overlayY.value = 0
+        emit('update:overlay', { width: newW, height: newH, x: 0, y: 0 })
+
+        emit('update:meta', {
+            name: 'cropped.png',
+            type: 'image/png',
+            size: atob(newSrc.split(',')[1]).length,
+            width: newW,
+            height: newH,
+            lastModified: Date.now()
+        })
+    }
+
+    function startResize(dir, e) {
+        resizing = true
+        resizeDir = dir
+        resizeStart.rect = panCont.value.getBoundingClientRect()
+
+        const currentZoom = pz ? pz.getTransform().scale : 1
+        resizeStart.scale = initialScale.value * currentZoom
+
+        resizeStart.origX = overlayX.value
+        resizeStart.origY = overlayY.value
+        resizeStart.origW = overlayW.value
+        resizeStart.origH = overlayH.value
+        window.addEventListener('mousemove', onResize)
+        window.addEventListener('mouseup',   stopResize)
+    }
+
+    function onResize(e) {
+        if (!resizing) return
+        const { left, top } = resizeStart.rect
+        const scale = resizeStart.scale
+
+        const natX = (e.clientX - left) / scale
+        const natY = (e.clientY - top ) / scale
+
+        let NX = resizeStart.origX
+        let NY = resizeStart.origY
+        let NW = resizeStart.origW
+        let NH = resizeStart.origH
+
+        if (resizeDir.includes('e')) NW = Math.max(10, Math.min(natX - NX, imgEl.value.naturalWidth  - NX))
+        if (resizeDir.includes('s')) NH = Math.max(10, Math.min(natY - NY, imgEl.value.naturalHeight - NY))
+
+        if (resizeDir.includes('w')) {
+            const newX = Math.max(0, Math.min(natX, resizeStart.origX + resizeStart.origW - 10))
+            NW = resizeStart.origX + resizeStart.origW - newX
+            NX = newX
+        }
+
+        if (resizeDir.includes('n')) {
+            const newY = Math.max(0, Math.min(natY, resizeStart.origY + resizeStart.origH - 10))
+            NH = resizeStart.origY + resizeStart.origH - newY
+            NY = newY
+        }
+
+        overlayX.value = NX
+        overlayY.value = NY
+        overlayW.value = NW
+        overlayH.value = NH
+
+        emit('update:overlay', { width: NW, height: NH, x: NX, y: NY })
+    }
+
+    function stopResize() {
+        resizing = false
+        window.removeEventListener('mousemove', onResize)
+        window.removeEventListener('mouseup',   stopResize)
+    }
+
+
+    const overlayStyle = computed(() => ({
+        position      : 'absolute',
+        left          : `${overlayX.value * initialScale.value}px`,
+        top           : `${overlayY.value * initialScale.value}px`,
+        width         : `${overlayW.value * initialScale.value}px`,
+        height        : `${overlayH.value * initialScale.value}px`,
+        border        : '2px dashed #ff3b30',
+        boxSizing     : 'border-box',
+        pointerEvents : 'all'
+    }))
+
+    defineExpose({
+        previewCropToContent,
+        cropToContent: previewCropToContent,
+        cropToOverlay,
+        showOverlay,
+        hideOverlay,
+        clear(){
+            preview.value = null
+            hideOverlay()
+            if (pz){ pz.dispose(); pz = null }
+            if (panCont.value){
+                panCont.value.style.transform = ''
+                panCont.value.style.width     = ''
+                panCont.value.style.height    = ''
+            }
+            initialScale.value = 1
+            if (fileInput.value) fileInput.value.value = ''
+            emit('update:preview', null)
+            emit('update:meta',    null)
+            emit('update:overlay', { width:0, height:0, x:0, y:0 })
+        }
     })
-  }
-  reader.readAsDataURL(fileOrBlob)
-}
-
-function openFullscreen() {
-  isFullscreen.value = true
-  resetZoom()
-  document.body.style.overflow = 'hidden'
-}
-
-function closeFullscreen() {
-  isFullscreen.value = false
-  document.body.style.overflow = 'auto'
-}
-
-function zoomIn() { zoom.value = Math.min(zoom.value * 1.25, 5) }
-function zoomOut(){ zoom.value = Math.max(zoom.value / 1.25, 0.1) }
-function resetZoom(){
-  zoom.value = 1
-  panX.value = 0
-  panY.value = 0
-}
-
-function handleWheel(e) {
-  const factor = e.deltaY > 0 ? 0.9 : 1.1
-  zoom.value = Math.min(Math.max(zoom.value * factor, 0.1), 5)
-}
-
-function startDrag(e) {
-  if (zoom.value <= 1) return
-  isDragging.value = true
-  dragStart.value = { x: e.clientX, y: e.clientY }
-  panStart.value  = { x: panX.value, y: panY.value }
-  document.addEventListener('mousemove', handleDrag)
-  document.addEventListener('mouseup', stopDrag)
-}
-
-function handleDrag(e) {
-  if (!isDragging.value) return
-  const dx = e.clientX - dragStart.value.x
-  const dy = e.clientY - dragStart.value.y
-  panX.value = panStart.value.x + dx / zoom.value
-  panY.value = panStart.value.y + dy / zoom.value
-}
-
-function stopDrag() {
-  isDragging.value = false
-  document.removeEventListener('mousemove', handleDrag)
-  document.removeEventListener('mouseup', stopDrag)
-}
-
-function handleKeydown(e) {
-  if (!isFullscreen.value) return
-  switch (e.key) {
-    case 'Escape': closeFullscreen(); break
-    case '+': case '=': e.preventDefault(); zoomIn(); break
-    case '-': e.preventDefault(); zoomOut(); break
-    case '0': e.preventDefault(); resetZoom(); break
-  }
-}
-
-onMounted(() => document.addEventListener('keydown', handleKeydown))
-onUnmounted(() => {
-  document.removeEventListener('keydown', handleKeydown)
-  document.body.style.overflow = 'auto'
-})
 </script>
 
 <style scoped>
-.dropField {
-  width: 100vw;
-  height: 100vh;
-  border: 2px dashed #ccc;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  cursor: pointer;
-  transition: border-color 0.3s;
-}
-.dropField:hover {
-  border-color: #888;
-}
+    .dropField {
+        width: 100%;
+        height: 100vh;
+        border: 2px dashed #ccc;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .dropField:hover {
+      border-color: #888;
+    }
 
-.preview-container {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.preview-img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  user-select: none;
-  will-change: transform;
-}
+    .preview-container {
+        position: relative;
+        width:100%; height:100%;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
 
-.fullscreen-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0,0,0,0.9);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+    .panzoom-container {
+        position: relative;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
 
-.fullscreen-container {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+    .panzoom-container {
+        position: relative;
+    }
 
-.close-btn {
-  position: absolute;
-  top: 20px;
-  right: 30px;
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: #fff;
-  font-size: 40px;
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  cursor: pointer;
-  z-index: 1001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.close-btn:hover {
-  background: rgba(255,255,255,0.3);
-}
+    .preview-img {
+        width:100%;
+        height:100%;
+        object-fit: contain;
+        user-select: none;
+        will-change: transform;
+    }
 
-.zoom-controls {
-  position: absolute;
-  bottom: 30px;
-  right: 30px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  z-index: 1001;
-}
-.zoom-btn {
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: #fff;
-  font-size: 20px;
-  width: 40px;
-  height: 40px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: bold;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.zoom-btn:hover {
-  background: rgba(255,255,255,0.3);
-}
+    .crop-overlay .handle {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        background: #fff;
+        border: 1px solid #ff3b30;
+        box-sizing: border-box;
+        z-index: 10;
+    }
 
-.image-container {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.image-container img {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-}
+    .crop-overlay .nw{top: -5px; left: -5px; cursor: nw-resize}
+    .crop-overlay .n {top: -5px; left:50%; transform: translateX(-50%); cursor: n-resize}
+    .crop-overlay .ne{top: -5px; right: -5px; cursor: ne-resize}
+    .crop-overlay .e {top: 50%; right: -5px; transform: translateY(-50%); cursor: e-resize}
+    .crop-overlay .se{bottom: -5px; right: -5px; cursor: se-resize}
+    .crop-overlay .s {bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize}
+    .crop-overlay .sw{bottom: -5px; left: -5px; cursor: sw-resize}
+    .crop-overlay .w {top: 50%; left: -5px; transform: translateY(-50%); cursor: w-resize}
 </style>
