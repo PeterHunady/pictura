@@ -1,58 +1,94 @@
 <template>
-    <div :class="['sidebar', { collapsed }]">
-        <button class="toggle-btn" @click="collapsed = !collapsed">
-            <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
+  <div :class="['sidebar', { collapsed }]">
+    <button class="toggle-btn" @click="collapsed = !collapsed">
+      <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
+    </button>
+
+    <div class="content" v-show="!collapsed">
+      <Metadata :meta="meta" />
+
+      <FixArtifactsBtn
+        @fix-artifacts="emit('fix-artifacts')"
+        @highlight-artifacts="emit('highlight-artifacts', $event)"
+      />
+
+
+      <CropControls
+        :meta="meta"
+        :initial-size="{ width: initialSize.width, height: initialSize.height }"
+        @crop="$emit('crop')"
+        @preview="$emit('preview-crop', $event)"
+        @apply="$emit('resize-crop', $event)"
+      />
+
+      <GrayscaleControl
+        @apply-grayscale="emit('apply-grayscale', $event)"
+      />
+
+      <BackgroundColorControl
+        v-if="meta"
+        :initialColor="initialColor"
+        @apply-color="emit('apply-color', $event)"
+      />
+
+      <div class="action-btns">
+        
+        <button
+          v-if="meta"
+          class="icon-btn"
+          @click="$emit('download')"
+          title="Stiahnuť súbor"
+        >
+          <img class="icon" :src="downloadIcon" alt="Download" />
         </button>
 
-        <div class="content" v-show="!collapsed">
-            <Metadata :meta="meta" />
+        <button
+          class="icon-btn"
+          @click="$emit('clear')"
+          title="Vymazať obrázok"
+        >
+          <img class="icon" :src="binIcon" alt="Delete" />
+        </button>
+      </div>
 
-            <CropControls
-                :meta="meta"
-                :initial-size="{ width: initialSize.width, height: initialSize.height }"
-                @crop="$emit('crop')"
-                @preview="$emit('preview-crop', $event)"
-                @apply="$emit('resize-crop', $event)"
-            />
-
-            <div class="action-btns">
-                <button class="icon-btn" @click="$emit('download')" title="Stiahnuť obrázok">
-                    <img class="icon" :src="downloadIcon" alt="Download" />
-                </button>
-                <button class="icon-btn" @click="$emit('clear')" title="Vymazať obrázok">
-                    <img class="icon" :src="binIcon" alt="Delete" />
-                </button>
-            </div>
-        </div>
     </div>
+  </div>
 </template>
 
 <script setup>
-    import { ref, watch } from 'vue'
-    import Metadata from './Metadata.vue'
-    import CropControls from './CropControls.vue'
+  import { ref, watch } from 'vue'
+  import Metadata      from './Metadata.vue'
+  import CropControls  from './CropControls.vue'  
+  import FixArtifactsBtn from './FixArtifactsButton.vue'
+  import BackgroundColorControl from './BackgroundColorControl.vue'
+  import GrayscaleControl from './GrayscaleControl.vue'
+  import downloadIcon  from '@/assets/download.png'
+  import binIcon       from '@/assets/bin.png'
 
-    import downloadIcon from '@/assets/download.png'
-    import binIcon from '@/assets/bin.png'
+  const collapsed = ref(true)
 
-    const props = defineProps({
-        meta: Object,
-        initialSize: Object
-    })
+  const props = defineProps({
+    meta: Object,
+    initialSize: Object,
+    initialColor: {
+      type: String,
+      default: '#ffffff'
+    }
+  })
 
-    const emit = defineEmits([
-        'download',
-        'clear',
-        'crop',
-        'preview-crop',
-        'resize-crop'
-    ])
+  const emit = defineEmits([
+    'download',
+    'clear',
+    'crop',
+    'preview-crop',
+    'resize-crop',
+    'fix-artifacts',
+    'apply-color',
+    'highlight-artifacts',
+    'apply-grayscale' 
+  ])
 
-    const collapsed = ref(true)
-
-    watch(() => props.meta, m => {
-        if (!m) collapsed.value = true
-    })
+  watch(() => props.meta, m => { if (!m) collapsed.value = true })
 </script>
 
 <style scoped>
@@ -69,6 +105,7 @@
         transition: transform .3s ease;
         z-index: 100;
     }
+    
     .sidebar.collapsed {
         transform: translateX(calc(100% - 30px));
     }
@@ -101,6 +138,7 @@
     .arrow-left {
         border-right: 8px solid #333;
     }
+
     .arrow-right {
         border-left: 8px solid #333;
     }
@@ -132,6 +170,7 @@
         height: 24px;
         display: block;
     }
+
     .icon-btn:hover .icon {
         opacity: 0.7;
     }

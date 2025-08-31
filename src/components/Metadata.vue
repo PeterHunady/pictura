@@ -47,6 +47,7 @@
         align-items: center;
         cursor: pointer;
     }
+
     .metadata-toggle span {
         font-size: 24px;
     }
@@ -56,15 +57,18 @@
         padding: 0.5rem;
         margin: 0;
     }
+
     .metadata-list li {
-        display:flex;
-        margin-bottom:0.3rem;
+        display: flex;
+        margin-bottom: 0.3rem;
     }
+
     .metadata-list li p {
         font-weight: 600;
         margin-right: 0.3rem;
         white-space: nowrap;
     }
+
     .no-meta {
         padding: 0.5rem;
         font-style: italic;
@@ -87,5 +91,9 @@
         border-left: 5px solid transparent;
         border-right: 5px solid transparent;
         border-top: 8px solid #333;
+    }
+
+    li {
+        color: black !important;
     }
 </style>
