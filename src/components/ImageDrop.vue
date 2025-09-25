@@ -178,21 +178,6 @@
     }
   }
 
-  async function loadExternalFile(file) {
-    if (!file) {
-      return
-    }
-
-    if (file.type === 'application/pdf') {
-      isPdf.value = true
-      await loadPdf(file)
-
-    } else {
-      isPdf.value = false
-      loadImage(file)
-    }
-  }
-
   function restoreSnapshot(snap) {
     if (!snap) {
       return
@@ -249,204 +234,8 @@
     }
   }
 
-  function canvasToBlob(canvas, type) {
-    return new Promise(res => canvas.toBlob(b => res(b), type))
-  }
-
-  async function estimateExport({ format = 'png' } = {}) {
-    format = String(format || 'png').toLowerCase()
-
-    if (isPdf.value) {
-      if (format === 'pdf') {
-        const srcDoc = await PDFDocument.load(pdfBytes())
-        const outDoc = await PDFDocument.create()
-
-        const srcPage = srcDoc.getPages()[currentPage.value - 1]
-        const { width: pageW, height: pageH } = srcPage.getSize()
-
-        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-        const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
-
-        const emb = await outDoc.embedPage(srcPage, {
-          left: x, bottom: y, right: x + width, top: y + height
-        })
-        outDoc.addPage([width, height]).drawPage(emb, { x: 0, y: 0 })
-
-        const bytes = await outDoc.save()
-        const blob  = new Blob([bytes], { type: 'application/pdf' })
-        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
-      }
-
-      const src = getSourceCanvas()
-      if (!src) return { blob: null, sizeBytes: 0, ext: format }
-
-      const sx = overlayW.value > 0 ? overlayX.value : 0
-      const sy = overlayH.value > 0 ? overlayY.value : 0
-      const sw = overlayW.value > 0 ? overlayW.value : src.width
-      const sh = overlayH.value > 0 ? overlayH.value : src.height
-
-      const c = document.createElement('canvas')
-      c.width = sw; c.height = sh
-      c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh)
-
-      const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
-      const blob  = await canvasToBlob(c, mime)
-      const size  = blob ? blob.size : 0
-      return { blob, sizeBytes: size, ext: format, mime }
-    }
-
-    const img = imgEl.value
-    if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
-
-    const sx = overlayW.value > 0 ? overlayX.value : 0
-    const sy = overlayH.value > 0 ? overlayY.value : 0
-    const sw = overlayW.value > 0 ? overlayW.value : img.naturalWidth
-    const sh = overlayH.value > 0 ? overlayH.value : img.naturalHeight
-
-    const c = document.createElement('canvas')
-    c.width = sw; c.height = sh
-    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
-
-    const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
-    const blob  = await canvasToBlob(c, mime)
-    const size  = blob ? blob.size : 0
-    return { blob, sizeBytes: size, ext: format, mime }
-  }
-
-  function triggerDownload(url, filename) {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
-    URL.revokeObjectURL(url)
-  }
-
-  function shouldReplace() {
-    if (!preview.value) {
-      return true
-    }
-
-    return window.confirm('Replace the current file? Unsaved edits will be lost.')
-  }
-
-  function extOf(fmt) {
-    return fmt === 'jpg' ? 'jpg' : (fmt === 'png' ? 'png' : 'pdf')
-  }
-
-  async function exportFile({ name = 'export', format = 'png' } = {}) {
-    const JPG_QUALITY = 1
-    const ext = extOf(format)
-    const cleanName = name.replace(/[\\/:*?"<>|]/g, '').trim() || 'export'
-    const filename = `${cleanName}.${ext}`
-
-    if (isPdf.value) {
-      if (format === 'pdf') {
-        const srcDoc = await PDFDocument.load(pdfBytes())
-        const outDoc = await PDFDocument.create()
-        const page = (await srcDoc.getPages())[currentPage.value - 1]
-        const { width: pageW, height: pageH } = page.getSize()
-        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-
-        let box
-        if (hasOverlay) {
-          const { x, y, width, height } = overlayBoxPdfCoords()
-          box = { x, y, w: width, h: height }
-        } else {
-          box = { x: 0, y: 0, w: pageW, h: pageH }
-        }
-
-        const embedded = await outDoc.embedPage(page, {
-          left: box.x, bottom: box.y, right: box.x + box.w, top: box.y + box.h,
-        })
-        outDoc.addPage([box.w, box.h]).drawPage(embedded, { x: 0, y: 0 })
-
-        const bytes = await outDoc.save()
-        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
-        triggerDownload(url, filename)
-        return
-      }
-
-      const pdf = await getDocument({ data: pdfBytes() }).promise
-      const page = await pdf.getPage(currentPage.value)
-
-      const vp1 = page.getViewport({ scale: 1 })
-      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
-      const scale = Math.min(dpiScale, maxScaleByPixels)
-      const vp = page.getViewport({ scale })
-
-      const off = document.createElement('canvas')
-      off.width = Math.round(vp.width)
-      off.height = Math.round(vp.height)
-      await page.render({ canvasContext: off.getContext('2d', { willReadFrequently: true }), viewport: vp }).promise
-
-      const factor = (scale / (pdfRenderScale.value || 1))
-      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-      const ox = hasOverlay ? Math.round(overlayX.value * factor) : 0
-      const oy = hasOverlay ? Math.round(overlayY.value * factor) : 0
-      const ow = hasOverlay ? Math.round(overlayW.value * factor) : off.width
-      const oh = hasOverlay ? Math.round(overlayH.value * factor) : off.height
-
-      const out = document.createElement('canvas')
-      out.width = ow; out.height = oh
-      const octx = out.getContext('2d')
-      octx.drawImage(off, ox, oy, ow, oh, 0, 0, ow, oh)
-
-      let url
-      if (format === 'png') {
-        url = out.toDataURL('image/png')
-      } else {
-        const white = document.createElement('canvas')
-        white.width = ow; white.height = oh
-        const wctx = white.getContext('2d')
-        wctx.fillStyle = '#ffffff'
-        wctx.fillRect(0, 0, ow, oh)
-        wctx.drawImage(out, 0, 0)
-        url = white.toDataURL('image/jpeg', JPG_QUALITY)
-      }
-      triggerDownload(url, filename)
-      return
-    }
-
-    const img = imgEl.value
-    if (!img?.naturalWidth) return
-
-    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-    const x = hasOverlay ? overlayX.value : 0
-    const y = hasOverlay ? overlayY.value : 0
-    const w = hasOverlay ? overlayW.value : maxW.value
-    const h = hasOverlay ? overlayH.value : maxH.value
-
-    const c = document.createElement('canvas')
-    c.width = w; c.height = h
-    const ctx = c.getContext('2d')
-
-    if (format === 'jpg') {
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, w, h)
-    }
-    ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
-
-    if (format === 'pdf') {
-      const pngBytes = dataURLtoU8(c.toDataURL('image/png'))
-      const outDoc = await PDFDocument.create()
-      const imgPng = await outDoc.embedPng(pngBytes)
-      const page = outDoc.addPage([w, h])
-      page.drawImage(imgPng, { x: 0, y: 0, width: w, height: h })
-      const bytes = await outDoc.save()
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
-      triggerDownload(url, filename)
-      return
-    }
-
-    const url = (format === 'png')
-      ? c.toDataURL('image/png')
-      : c.toDataURL('image/jpeg', JPG_QUALITY)
-
-    triggerDownload(url, filename)
+  function pdfBytes () {
+    return originalPdf.value instanceof Uint8Array ? originalPdf.value.slice() : new Uint8Array(originalPdf.value)
   }
 
   function makeDocSig() {
@@ -457,6 +246,14 @@
     if (!preview.value) {
       fileInput.value.click()
     }
+  }
+
+  function shouldReplace() {
+    if (!preview.value) {
+      return true
+    }
+
+    return window.confirm('Replace the current file? Unsaved edits will be lost.')
   }
 
   function handleFileChange(e) {
@@ -501,6 +298,21 @@
     }
   }
 
+  async function loadExternalFile(file) {
+    if (!file) {
+      return
+    }
+
+    if (file.type === 'application/pdf') {
+      isPdf.value = true
+      await loadPdf(file)
+
+    } else {
+      isPdf.value = false
+      loadImage(file)
+    }
+  }
+
   function loadImage(file) {
     originalFileName.value = file.name
     originalFileType.value = file.type
@@ -527,10 +339,6 @@
       }
     }
     reader.readAsDataURL(file)
-  }
-
-  function pdfBytes () {
-    return originalPdf.value instanceof Uint8Array ? originalPdf.value.slice() : new Uint8Array(originalPdf.value)
   }
 
   async function loadPdf (file) {
@@ -705,13 +513,6 @@
     window.addEventListener('mouseup',   stopResize)
   }
 
-  function stopResize() {
-    resizing = false
-    window.removeEventListener('mousemove', onResize)
-    window.removeEventListener('mouseup', stopResize)
-    if (pz) pz.resume()
-  }
-
   function onResize(e) {
     if (!resizing) {
       return
@@ -763,75 +564,39 @@
     emit('update:overlay', { width: overlayW.value, height: overlayH.value, x: overlayX.value, y: overlayY.value })
   }
 
-  async function cropToOverlay() {
-    pushHistory()
-    if (isPdf.value) {
-      if (overlayW.value < 1 || overlayH.value < 1) {
-        return
-      }
+  function stopResize() {
+    resizing = false
+    window.removeEventListener('mousemove', onResize)
+    window.removeEventListener('mouseup', stopResize)
+    if (pz) pz.resume()
+  }
 
-      const { x, y, width, height } = overlayBoxPdfCoords()
+  function showOverlay(w, h, x = overlayX.value, y = overlayY.value) {
+    const MW = maxW.value || 0
+    const MH = maxH.value || 0
 
-      const srcDoc = await PDFDocument.load(pdfBytes())
-      const outDoc = await PDFDocument.create()
+    const cw = Math.max(1, Math.min(w  ?? MW, MW || w  || 1))
+    const ch = Math.max(1, Math.min(h  ?? MH, MH || h  || 1))
+    const cx = MW ? Math.max(0, Math.min(x, MW - cw)) : (x ?? 0)
+    const cy = MH ? Math.max(0, Math.min(y, MH - ch)) : (y ?? 0)
 
-      const pages   = srcDoc.getPages()
-      const srcPage = pages[currentPage.value - 1]
-      const embedded = await outDoc.embedPage(srcPage, {
-        left: x,
-        bottom: y,
-        right: x + width,
-        top: y + height,
-      })
+    overlayW.value = Math.round(cw)
+    overlayH.value = Math.round(ch)
+    overlayX.value = Math.round(cx)
+    overlayY.value = Math.round(cy)
 
-      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
+    emit('update:overlay', {
+      width: overlayW.value,
+      height: overlayH.value,
+      x: overlayX.value,
+      y: overlayY.value,
+    })
+  }
 
-      const newBytes = await outDoc.save()
-      originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
-      originalFileName.value = 'cropped.pdf'
-      originalFileSize.value = newBytes.length
-      originalLastModified.value = Date.now()
-
-      emit('update:preview', preview.value)
-      emit('update:meta', {
-        name: 'cropped.pdf',
-        type: 'application/pdf',
-        size: newBytes.length,
-        width: Math.round(width),
-        height: Math.round(height),
-        lastModified: Date.now(),
-        docSig: makeDocSig(), 
-      })
-
-      setupOverlay(width, height)
-      await renderPdfPage()
-      return
-
-    }else {
-      const c = document.createElement('canvas')
-      c.width = overlayW.value; c.height = overlayH.value
-      const ctx = c.getContext('2d')
-
-      ctx.drawImage(
-        imgEl.value,
-        overlayX.value, overlayY.value, overlayW.value, overlayH.value,
-        0, 0, overlayW.value, overlayH.value
-      )
-
-      const newSrc = c.toDataURL('image/png')
-      preview.value = newSrc
-
-      emit('update:preview', newSrc)
-      emit('update:meta', {
-        name: 'cropped.png', type: 'image/png',
-        size: atob(newSrc.split(',')[1]).length,
-        width: overlayW.value, height: overlayH.value,
-        lastModified: Date.now()
-      })
-      
-      setupOverlay(overlayW.value, overlayH.value)
-    }
+  function hideOverlay() {
+    overlayW.value = 0
+    overlayH.value = 0
+    emit('update:overlay', { width:0, height:0, x:0, y:0 })
   }
 
   function overlayBoxPdfCoords() {
@@ -846,291 +611,21 @@
     }
   }
 
-  async function download() {
-    if (isPdf.value) {
-      const srcDoc = await PDFDocument.load(pdfBytes())
-      const outDoc = await PDFDocument.create()
-
-      const pages   = srcDoc.getPages()
-      const srcPage = pages[currentPage.value - 1]
-      const { width: pageW, height: pageH } = srcPage.getSize()
-
-      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-      const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
-
-      const embedded = await outDoc.embedPage(srcPage, {
-        left: x,
-        bottom: y,
-        right: x + width,
-        top: y + height,
-      })
-
-      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
-
-      const bytes = await outDoc.save()
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
-
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `page-${currentPage.value}.pdf`
-      a.click()
-      URL.revokeObjectURL(url)
-      return
+  function getSourceCanvas () {
+    if (isPdf.value && pdfCanvas.value?.width) {
+      return pdfCanvas.value
     }
+    const img = imgEl.value
 
-    const link = document.createElement('a')
-    link.href = preview.value
-    link.download = 'edited.png'
-    link.click()
-  }
-
-  function hexToRgb(hex) {
-    let c = (hex || '').replace('#','').trim()
-    if (c.length === 3) c = c.split('').map(ch => ch + ch).join('')
-
-    return {
-      r: parseInt(c.slice(0,2),16) || 0,
-      g: parseInt(c.slice(2,4),16) || 0,
-      b: parseInt(c.slice(4,6),16) || 0,
+    if (!img?.naturalWidth) {
+      return null
     }
-  }
-
-  function dataURLtoU8(dataURL) {
-    const b64 = dataURL.split(',')[1]
-    const bin = atob(b64)
-    const u8  = new Uint8Array(bin.length)
-
-    for (let i=0;i<bin.length;i++) {
-      u8[i] = bin.charCodeAt(i)
-    }
-    return u8
-  }
-
-  function colorToAlphaAndFillCanvas(canvas, hexColor, bgRGB) {
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    const width = canvas.width
-    const height = canvas.height
-    const imageData = context.getImageData(0, 0, width, height)
-    const data = imageData.data
-
-    const srgbToLinear = (value) => {
-      value /= 255
-      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
-    }
-    const linearToSrgb = (value) => {
-      value = value <= 0.0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - 0.055
-      return Math.max(0, Math.min(255, Math.round(value * 255)))
-    }
-
-    const background = bgRGB || { r: data[0], g: data[1], b: data[2] }
-    const baseRedLinear = srgbToLinear(background.r)
-    const baseGreenLinear = srgbToLinear(background.g)
-    const baseBlueLinear = srgbToLinear(background.b)
-
-    const tolerance = 0.08
-
-    for (let index = 0; index < data.length; index += 4) {
-      const srcRedLinear = srgbToLinear(data[index])
-      const srcGreenLinear = srgbToLinear(data[index + 1])
-      const srcBlueLinear = srgbToLinear(data[index + 2])
-
-      const alphaFromRed = baseRedLinear < 1e-6
-        ? (srcRedLinear > baseRedLinear ? 1 : 0)
-        : (srcRedLinear >= baseRedLinear
-            ? (srcRedLinear - baseRedLinear) / (1 - baseRedLinear)
-            : (baseRedLinear - srcRedLinear) / baseRedLinear)
-
-      const alphaFromGreen = baseGreenLinear < 1e-6
-        ? (srcGreenLinear > baseGreenLinear ? 1 : 0)
-        : (srcGreenLinear >= baseGreenLinear
-            ? (srcGreenLinear - baseGreenLinear) / (1 - baseGreenLinear)
-            : (baseGreenLinear - srcGreenLinear) / baseGreenLinear)
-
-      const alphaFromBlue = baseBlueLinear < 1e-6
-        ? (srcBlueLinear > baseBlueLinear ? 1 : 0)
-        : (srcBlueLinear >= baseBlueLinear
-            ? (srcBlueLinear - baseBlueLinear) / (1 - baseBlueLinear)
-            : (baseBlueLinear - srcBlueLinear) / baseBlueLinear)
-
-      let alpha = Math.max(alphaFromRed, alphaFromGreen, alphaFromBlue)
-      if (tolerance > 0) {
-        alpha = Math.max(0, Math.min(1, (alpha - tolerance) / (1 - tolerance)))
-      }
-
-      let foreRedLinear = 0, foreGreenLinear = 0, foreBlueLinear = 0
-      if (alpha > 1e-5) {
-        foreRedLinear = (srcRedLinear   - (1 - alpha) * baseRedLinear)   / alpha
-        foreGreenLinear = (srcGreenLinear - (1 - alpha) * baseGreenLinear) / alpha
-        foreBlueLinear = (srcBlueLinear  - (1 - alpha) * baseBlueLinear)  / alpha
-      }
-
-      data[index] = linearToSrgb(foreRedLinear)
-      data[index + 1] = linearToSrgb(foreGreenLinear)
-      data[index + 2] = linearToSrgb(foreBlueLinear)
-      data[index + 3] = Math.round(alpha * 255)
-    }
-
-    context.putImageData(imageData, 0, 0)
-    context.globalCompositeOperation = 'destination-over'
-    context.fillStyle = hexColor
-    context.fillRect(0, 0, width, height)
-    context.globalCompositeOperation = 'source-over'
-
-    return canvas.toDataURL('image/png')
-  }
-
-  async function setBackgroundColor(hexColor) {
-    pushHistory()
-    endPreviewBackgroundColor()
-
-    if (isPdf.value) {
-      suppressGalleryOnce.value = true
-      const pdf    = await getDocument({ data: pdfBytes() }).promise
-      const outDoc = await PDFDocument.create()
-      const bg     = origBg.value
-
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p)
-
-        const vp1 = page.getViewport({ scale: 1 })
-        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
-        const scale = Math.min(dpiScale, maxScaleByPixels)
-        const vp  = page.getViewport({ scale })
-
-        const off = document.createElement('canvas')
-        off.width = Math.round(vp.width)
-        off.height = Math.round(vp.height)
-
-        await page.render({
-          canvasContext: off.getContext('2d', { willReadFrequently: true }),
-          viewport: vp
-        }).promise
-
-        const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, bg)
-        const pngBytes = dataURLtoU8(dataUrl)
-        const pngImg = await outDoc.embedPng(pngBytes)
-
-        const wPt = vp1.width
-        const hPt = vp1.height
-        const outPage = outDoc.addPage([wPt, hPt])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
-      }
-
-      const newBytes = await outDoc.save()
-      originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
-      originalFileSize.value = newBytes.length
-      originalLastModified.value = Date.now()
-
-      emit('update:preview', preview.value)
-      emit('update:bgcolor', hexColor)
-      await renderPdfPage()
-      origBg.value = hexToRgb(hexColor)
-      return
-    }
-
-    const img = imgEl.value; if (!img) return
-    const w = img.naturalWidth, h = img.naturalHeight
     const off = document.createElement('canvas')
-    off.width = w; off.height = h
-    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, w, h)
 
-    const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, origBg.value)
-    preview.value = dataUrl
-    emit('update:preview', dataUrl)
-    emit('update:bgcolor', hexColor)
-    origBg.value = hexToRgb(hexColor)
-  }
-
-  function deblendToTransparent(canvas, bgRGB) {
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    const { width, height } = canvas
-    const imageData = context.getImageData(0, 0, width, height)
-    const data = imageData.data
-
-    const srgbToLinear = v => {
-      v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
-    }
-    const linearToSrgb = v => {
-      v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055
-      return Math.max(0, Math.min(255, Math.round(v * 255)))
-    }
-
-    const br = srgbToLinear(bgRGB.r)
-    const bg = srgbToLinear(bgRGB.g)
-    const bb = srgbToLinear(bgRGB.b)
-    const tol = 0.08
-
-    for (let i = 0; i < data.length; i += 4) {
-      const rL = srgbToLinear(data[i])
-      const gL = srgbToLinear(data[i+1])
-      const bL = srgbToLinear(data[i+2])
-
-      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : (rL >= br ? (rL - br) / (1 - br) : (br - rL) / br)
-      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : (gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg)
-      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : (bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb)
-      let a = Math.max(aR, aG, aB)
-      if (tol > 0) a = Math.max(0, Math.min(1, (a - tol) / (1 - tol)))
-
-      let fr = 0, fg = 0, fb = 0
-      if (a > 1e-5) {
-        fr = (rL - (1 - a) * br) / a
-        fg = (gL - (1 - a) * bg) / a
-        fb = (bL - (1 - a) * bb) / a
-      }
-
-      data[i]   = linearToSrgb(fr)
-      data[i+1] = linearToSrgb(fg)
-      data[i+2] = linearToSrgb(fb)
-      data[i+3] = Math.round(a * 255)
-    }
-
-    context.putImageData(imageData, 0, 0)
-    return canvas.toDataURL('image/png')
-  }
-
-  function previewBackgroundColor(hexColor) {
-    const src = getSourceCanvas()
-    if (!src || !previewImg.value) return
-
-    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
-
-    if (matteKey !== key || !matteDataURL) {
-      const MAX_PREV_PX = 2e6
-      const scale = Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
-      const w = Math.max(1, Math.round(src.width * scale))
-      const h = Math.max(1, Math.round(src.height * scale))
-
-      const off = document.createElement('canvas')
-      off.width = w
-      off.height = h
-      off.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h)
-
-      matteDataURL = deblendToTransparent(off, origBg.value)
-      matteKey = key
-    }
-
-    previewImg.value.src = matteDataURL
-    previewImg.value.style.backgroundColor = hexColor
-    previewType.value = 'bgcolor'
-    previewOn.value = true
-  }
-
-  function endPreviewBackgroundColor() {
-    if (previewImg.value) {
-      previewImg.value.src = ''
-      previewImg.value.style.backgroundColor = ''
-    }
-    if (previewType.value === 'bgcolor') {
-      previewOn.value = false
-      previewType.value = null
-    }
-  }
-
-  function rgbToHex({ r, g, b }) {
-    const to2 = v => v.toString(16).padStart(2,'0')
-    return '#' + to2(r) + to2(g) + to2(b)
+    off.width = img.naturalWidth
+    off.height = img.naturalHeight
+    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    return off
   }
 
   function detectBackground () {
@@ -1219,49 +714,365 @@
     emit('update:bgcolor', rgbToHex(origBg.value))
   }
 
-  function showOverlay(w, h, x = overlayX.value, y = overlayY.value) {
-    const MW = maxW.value || 0
-    const MH = maxH.value || 0
+  function clearAllPreviews () {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
 
-    const cw = Math.max(1, Math.min(w  ?? MW, MW || w  || 1))
-    const ch = Math.max(1, Math.min(h  ?? MH, MH || h  || 1))
-    const cx = MW ? Math.max(0, Math.min(x, MW - cw)) : (x ?? 0)
-    const cy = MH ? Math.max(0, Math.min(y, MH - ch)) : (y ?? 0)
-
-    overlayW.value = Math.round(cw)
-    overlayH.value = Math.round(ch)
-    overlayX.value = Math.round(cx)
-    overlayY.value = Math.round(cy)
-
-    emit('update:overlay', {
-      width: overlayW.value,
-      height: overlayH.value,
-      x: overlayX.value,
-      y: overlayY.value,
-    })
+    if (node) {
+      node.style.filter = ''
+    }
+    if (previewImg.value) {
+      previewImg.value.src = ''
+    }
+    previewOn.value = false
+    previewType.value = null
   }
 
-  function hideOverlay() {
+  function undo() {
+    const snap = history.pop()
+    if (!snap) {
+      return
+    }
+
+    restoreSnapshot(snap)
+  }
+
+  function resetToOriginal() {
+    if (!origSnapshot.value) {
+      return
+    }
+
+    history.length = 0
+    restoreSnapshot(origSnapshot.value)
+  }
+
+  function clear() {
+    clearAllPreviews()
+    preview.value = null
+    isPdf.value = false
+    overlayX.value = 0
+    overlayY.value = 0
     overlayW.value = 0
     overlayH.value = 0
+    currentPage.value = 1
+    totalPages.value = 1
+    suppressGalleryOnce.value = false
+
+    if (pz) {
+      pz.dispose()
+      pz = null
+    }
+
+    panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'' })
+    initialScale.value = 1
+    fileInput.value && (fileInput.value.value = '')
+
+    emit('update:preview', null)
+    emit('update:meta', null)
     emit('update:overlay', { width:0, height:0, x:0, y:0 })
   }
 
-  const overlayStyle = computed(() => {
-    const s = initialScale.value || 1
-
-    return {
-      position: 'absolute',
-      left: `${overlayX.value * s}px`,
-      top: `${overlayY.value * s}px`,
-      width: `${overlayW.value * s}px`,
-      height: `${overlayH.value * s}px`,
-      border: '2px dashed #ff3b30',
-      boxSizing: 'border-box',
-      pointerEvents: 'all',
-      zIndex: 5,
+  function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
+    if (highlightOn.value) {
+      clearHighlights(); return
     }
-  })
+
+    const { diffThresh = 12, lowEdge = 40, highEdge = 150, dilate = 1} = opts
+
+    const src = getSourceCanvas(), mc = markCanvas.value
+    if (!src || !mc) {
+      return
+    }
+
+    const W = src.width, H = src.height
+    if (mc.width !== W || mc.height !== H) {
+      mc.width = W; mc.height = H
+    }
+
+    const sctx = src.getContext('2d', { willReadFrequently: true })
+    const srcIm = sctx.getImageData(0,0,W,H)
+    const S = srcIm.data
+    const B = bilateralOnceRGB(S, W, H, 2, 2, 25)
+
+    const Y = new Float32Array(W*H)
+    for (let i=0,j=0;i<S.length;i+=4,j++) Y[j] = 0.299*S[i] + 0.587*S[i+1] + 0.114*S[i+2]
+    const G = sobelMag(Y, W, H)
+
+    const near = new Uint8Array(W*H)
+    const core = new Uint8Array(W*H)
+    for (let i=0;i<near.length;i++) {
+      if (G[i] > lowEdge) {
+        near[i]=1
+      } 
+      if (G[i] > highEdge) {
+        core[i]=1 
+      }
+    }
+
+    let nearDil = near
+    for (let k=0;k<dilate;k++) {
+      nearDil = dilate1px(nearDil, W, H)
+    }
+
+    const mask = new Uint8Array(W*H)
+    for (let i=0,j=0;i<S.length;i+=4,j++){
+      const d = (Math.abs(S[i]-B[i]) + Math.abs(S[i+1]-B[i+1]) + Math.abs(S[i+2]-B[i+2])) / 3
+      if (d > diffThresh && nearDil[j] && !core[j]) {
+        mask[j] = 1
+      }
+    }
+
+    const cr = parseInt(color.slice(1,3),16)
+    const cg = parseInt(color.slice(3,5),16)
+    const cb = parseInt(color.slice(5,7),16)
+    const A = 200
+
+    const octx = mc.getContext('2d')
+    const oIm = octx.createImageData(W,H)
+    const O = oIm.data
+
+    for (let y=0;y<H;y++){
+      for (let x=0;x<W;x++){
+        const id = y*W + x
+        if (!mask[id]) {
+          continue
+        }
+
+        const k = id*4
+        O[k]=cr; O[k+1]=cg; O[k+2]=cb; O[k+3]=A
+      }
+    }
+    octx.putImageData(oIm,0,0)
+    highlightOn.value = true
+  }
+
+  function fixJpegArtifacts() {
+    pushHistory()
+    const img = imgEl.value;
+    if (!img?.naturalWidth) {
+      return;
+    }
+
+    const W = img.naturalWidth, H = img.naturalHeight;
+
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const ctxOff = off.getContext('2d', { willReadFrequently: true });
+    ctxOff.drawImage(img, 0, 0, W, H);
+
+    const src0 = ctxOff.getImageData(0, 0, W, H);
+    const s0 = src0.data;
+    const dst0 = ctxOff.createImageData(W, H);
+    const d0 = dst0.data;
+
+    const r = 2;
+    const twoσs2 = 2*2*2, twoσr2 = 2*25*25;
+
+    const sp = new Array(2*r+1).fill(0).map((_,i)=>{
+      const x = i-r; return Math.exp(- (x*x)/twoσs2 );
+    });
+
+    for (let y=r; y<H-r; y++) {
+      for (let x=r; x<W-r; x++) {
+        const i0 = (y*W + x)*4;
+        const r0 = s0[i0], g0 = s0[i0+1], b0 = s0[i0+2];
+        let wsum=0, sr=0, sg=0, sb=0;
+
+        for (let dy=-r; dy<=r; dy++){
+          const wy = sp[dy+r];
+          for (let dx=-r; dx<=r; dx++){
+            const wx = sp[dx+r];
+            const wS = wy*wx;
+            const ii = ((y+dy)*W + (x+dx))*4;
+            const dr = s0[ii]   - r0;
+            const dg = s0[ii+1] - g0;
+            const db = s0[ii+2] - b0;
+            const wR = Math.exp(-(dr*dr+dg*dg+db*db)/twoσr2);
+            const w  = wS * wR;
+
+            wsum += w;
+            sr += s0[ii] * w;
+            sg += s0[ii+1] * w;
+            sb += s0[ii+2] * w;
+          }
+        }
+
+        d0[i0] = sr/wsum;
+        d0[i0+1] = sg/wsum;
+        d0[i0+2] = sb/wsum;
+        d0[i0+3] = s0[i0+3];
+      }
+    }
+
+    for (let y=0;y<H;y++){
+      for (let x=0;x<W;x++){
+        if (y<r||y>=H-r||x<r||x>=W-r){
+          const i = (y*W + x)*4;
+          d0[i]=s0[i]; d0[i+1]=s0[i+1]; d0[i+2]=s0[i+2]; d0[i+3]=s0[i+3];
+        }
+      }
+    }
+    ctxOff.putImageData(dst0, 0, 0);
+
+
+    const ctx = off.getContext('2d');
+    const blurred = ctx.getImageData(0, 0, W, H);
+    const gauss = gaussianBlur(blurred, W, H, 5, 1.0);
+    const G = gauss.data;
+
+    const finalImg = ctx.createImageData(W, H);
+    const F = finalImg.data;
+    const M = dst0.data;    
+    const amount = 1.2;
+
+    for (let i=0; i<M.length; i+=4){
+      for (let c=0;c<3;c++){
+        const detail = M[i+c] - G[i+c];
+        F[i+c] = Math.min(255, Math.max(0, M[i+c] + amount*detail));
+      }
+      F[i+3] = M[i+3];
+    }
+
+    ctx.putImageData(finalImg, 0, 0);
+
+    const newSrc = off.toDataURL('image/png');
+    preview.value = newSrc;
+    emit('update:preview', newSrc);
+  }
+
+  function clearHighlights () {
+    const mc = markCanvas.value; if (!mc) return
+    mc.getContext('2d').clearRect(0, 0, mc.width, mc.height)
+    highlightOn.value = false
+  }
+
+  function bilateralOnceRGB(S, W, H, r = 2, sigmaS = 2, sigmaR = 25) {
+    const twoσs2 = 2 * sigmaS * sigmaS
+    const twoσr2 = 2 * sigmaR * sigmaR
+    const sp = new Float32Array(2*r+1)
+    for (let i=0;i<sp.length;i++) { const x = i-r; sp[i] = Math.exp(-(x*x)/twoσs2) }
+
+    const out = new Uint8ClampedArray(W*H*4)
+    for (let y=r; y < H-r; y++) {
+      for (let x=r; x < W-r; x++) {
+        const i0 = (y*W + x)*4
+        const r0 = S[i0], g0 = S[i0+1], b0 = S[i0+2]
+        let wsum=0, sr=0, sg=0, sb=0
+
+        for (let dy=-r; dy<=r; dy++){
+          const wy = sp[dy+r]
+          for (let dx=-r; dx<=r; dx++){
+            const wx = sp[dx+r]
+            const ii = ((y+dy)*W + (x+dx))*4
+            const dr = S[ii]   - r0
+            const dg = S[ii+1] - g0
+            const db = S[ii+2] - b0
+            const w  = wy*wx * Math.exp(-(dr*dr+dg*dg+db*db)/twoσr2)
+            wsum += w; sr += S[ii]*w; sg += S[ii+1]*w; sb += S[ii+2]*w
+          }
+        }
+
+        out[i0] = sr/wsum
+        out[i0+1] = sg/wsum
+        out[i0+2] = sb/wsum
+        out[i0+3] = S[i0+3]
+      }
+    }
+
+    for (let y = 0; y < H; y++){
+      for (let x = 0 ; x < W ; x++){
+        if (y>=r && y<H-r && x>=r && x<W-r) {
+          continue
+        }
+
+        const i = (y*W + x)*4
+        out[i]=S[i]; out[i+1]=S[i+1]; out[i+2]=S[i+2]; out[i+3]=S[i+3]
+      }
+    }
+    return out
+  }
+
+  function sobelMag(Y, W, H){
+    const M = new Float32Array(W*H)
+    
+    for (let y = 1 ; y < H-1 ; y++){
+      for (let x = 1; x < W-1; x++){
+        const i = y*W+x
+        const ym = W*(y-1), y0=W*y, yp=W*(y+1)
+        const gx = -Y[ym+x-1]-2*Y[y0+x-1]-Y[yp+x-1] + Y[ym+x+1]+2*Y[y0+x+1]+Y[yp+x+1]
+        const gy = Y[ym+x-1]+2*Y[ym+x]+Y[ym+x+1] - Y[yp+x-1]-2*Y[yp+x]-Y[yp+x+1]
+        M[i] = Math.abs(gx)+Math.abs(gy)
+      }
+    }
+    return M
+  }
+
+  function dilate1px(mask, W, H){
+    const out = new Uint8Array(W*H)
+
+    for (let y=0;y<H;y++){
+      for (let x=0;x<W;x++){
+        let on = 0
+
+        for (let dy=-1;dy<=1;dy++){
+          const yy = Math.min(H-1, Math.max(0, y+dy))
+
+          for (let dx=-1;dx<=1;dx++){
+            const xx = Math.min(W-1, Math.max(0, x+dx))
+            if (mask[yy*W+xx]) { 
+              on=1;
+              break 
+            }
+          }
+          if (on) {
+            break
+          }
+        }
+        out[y*W+x]=on
+      }
+    }
+    return out
+  }
+
+  function gaussianBlur(imageData, W, H, kSize, sigma){
+    const data = imageData.data;
+    const half = Math.floor(kSize/2);
+    const ga = new Array(kSize).fill(0).map((_,i)=>{
+      const x = i-half; return Math.exp(- (x*x)/(2*sigma*sigma));
+    });
+
+    const s = ga.reduce((a,b)=>a+b,0);
+    for (let i=0;i<ga.length;i++) ga[i]/=s;
+
+    const tmp = new Uint8ClampedArray(data.length);
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        for (let c=0; c<4; c++){
+          let acc=0;
+          for (let k=-half;k<=half;k++){
+            const xx = Math.min(W-1, Math.max(0, x+k));
+            acc += data[(y*W+xx)*4 + c] * ga[k+half];
+          }
+          tmp[(y*W+x)*4 + c] = acc;
+        }
+      }
+    }
+
+    const out = new Uint8ClampedArray(data.length);
+
+    for (let y=0; y<H; y++){
+      for (let x=0; x<W; x++){
+        for (let c=0; c<4; c++){
+          let acc=0;
+          for (let k=-half;k<=half;k++){
+            const yy = Math.min(H-1, Math.max(0, y+k));
+            acc += tmp[(yy*W+x)*4 + c] * ga[k+half];
+          }
+          out[(y*W+x)*4 + c] = acc;
+        }
+      }
+    }
+    return new ImageData(out, W, H);
+  }
 
   function previewCropToContent () {
     const sourceCanvas = getSourceCanvas()
@@ -1416,345 +1227,337 @@
     showOverlay(newW, newH, newX, newY)
   }
 
-  function fixJpegArtifacts() {
+  async function cropToOverlay() {
     pushHistory()
-    const img = imgEl.value;
-    if (!img?.naturalWidth) {
-      return;
-    }
-
-    const W = img.naturalWidth, H = img.naturalHeight;
-
-    const off = document.createElement('canvas');
-    off.width = W; off.height = H;
-    const ctxOff = off.getContext('2d', { willReadFrequently: true });
-    ctxOff.drawImage(img, 0, 0, W, H);
-
-    const src0 = ctxOff.getImageData(0, 0, W, H);
-    const s0 = src0.data;
-    const dst0 = ctxOff.createImageData(W, H);
-    const d0 = dst0.data;
-
-    const r = 2;
-    const twoσs2 = 2*2*2, twoσr2 = 2*25*25;
-
-    const sp = new Array(2*r+1).fill(0).map((_,i)=>{
-      const x = i-r; return Math.exp(- (x*x)/twoσs2 );
-    });
-
-    for (let y=r; y<H-r; y++) {
-      for (let x=r; x<W-r; x++) {
-        const i0 = (y*W + x)*4;
-        const r0 = s0[i0], g0 = s0[i0+1], b0 = s0[i0+2];
-        let wsum=0, sr=0, sg=0, sb=0;
-
-        for (let dy=-r; dy<=r; dy++){
-          const wy = sp[dy+r];
-          for (let dx=-r; dx<=r; dx++){
-            const wx = sp[dx+r];
-            const wS = wy*wx;
-            const ii = ((y+dy)*W + (x+dx))*4;
-            const dr = s0[ii]   - r0;
-            const dg = s0[ii+1] - g0;
-            const db = s0[ii+2] - b0;
-            const wR = Math.exp(-(dr*dr+dg*dg+db*db)/twoσr2);
-            const w  = wS * wR;
-
-            wsum += w;
-            sr += s0[ii] * w;
-            sg += s0[ii+1] * w;
-            sb += s0[ii+2] * w;
-          }
-        }
-
-        d0[i0] = sr/wsum;
-        d0[i0+1] = sg/wsum;
-        d0[i0+2] = sb/wsum;
-        d0[i0+3] = s0[i0+3];
+    if (isPdf.value) {
+      if (overlayW.value < 1 || overlayH.value < 1) {
+        return
       }
+
+      const { x, y, width, height } = overlayBoxPdfCoords()
+
+      const srcDoc = await PDFDocument.load(pdfBytes())
+      const outDoc = await PDFDocument.create()
+
+      const pages   = srcDoc.getPages()
+      const srcPage = pages[currentPage.value - 1]
+      const embedded = await outDoc.embedPage(srcPage, {
+        left: x,
+        bottom: y,
+        right: x + width,
+        top: y + height,
+      })
+
+      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
+
+      const newBytes = await outDoc.save()
+      originalPdf.value = newBytes
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
+      originalFileName.value = 'cropped.pdf'
+      originalFileSize.value = newBytes.length
+      originalLastModified.value = Date.now()
+
+      emit('update:preview', preview.value)
+      emit('update:meta', {
+        name: 'cropped.pdf',
+        type: 'application/pdf',
+        size: newBytes.length,
+        width: Math.round(width),
+        height: Math.round(height),
+        lastModified: Date.now(),
+        docSig: makeDocSig(), 
+      })
+
+      setupOverlay(width, height)
+      await renderPdfPage()
+      return
+
+    }else {
+      const c = document.createElement('canvas')
+      c.width = overlayW.value; c.height = overlayH.value
+      const ctx = c.getContext('2d')
+
+      ctx.drawImage(
+        imgEl.value,
+        overlayX.value, overlayY.value, overlayW.value, overlayH.value,
+        0, 0, overlayW.value, overlayH.value
+      )
+
+      const newSrc = c.toDataURL('image/png')
+      preview.value = newSrc
+
+      emit('update:preview', newSrc)
+      emit('update:meta', {
+        name: 'cropped.png', type: 'image/png',
+        size: atob(newSrc.split(',')[1]).length,
+        width: overlayW.value, height: overlayH.value,
+        lastModified: Date.now()
+      })
+      
+      setupOverlay(overlayW.value, overlayH.value)
     }
-
-    for (let y=0;y<H;y++){
-      for (let x=0;x<W;x++){
-        if (y<r||y>=H-r||x<r||x>=W-r){
-          const i = (y*W + x)*4;
-          d0[i]=s0[i]; d0[i+1]=s0[i+1]; d0[i+2]=s0[i+2]; d0[i+3]=s0[i+3];
-        }
-      }
-    }
-    ctxOff.putImageData(dst0, 0, 0);
-
-
-    const ctx = off.getContext('2d');
-    const blurred = ctx.getImageData(0, 0, W, H);
-    const gauss = gaussianBlur(blurred, W, H, 5, 1.0);
-    const G = gauss.data;
-
-    const finalImg = ctx.createImageData(W, H);
-    const F = finalImg.data;
-    const M = dst0.data;    
-    const amount = 1.2;
-
-    for (let i=0; i<M.length; i+=4){
-      for (let c=0;c<3;c++){
-        const detail = M[i+c] - G[i+c];
-        F[i+c] = Math.min(255, Math.max(0, M[i+c] + amount*detail));
-      }
-      F[i+3] = M[i+3];
-    }
-
-    ctx.putImageData(finalImg, 0, 0);
-
-    const newSrc = off.toDataURL('image/png');
-    preview.value = newSrc;
-    emit('update:preview', newSrc);
   }
 
-  function gaussianBlur(imageData, W, H, kSize, sigma){
-    const data = imageData.data;
-    const half = Math.floor(kSize/2);
-    const ga = new Array(kSize).fill(0).map((_,i)=>{
-      const x = i-half; return Math.exp(- (x*x)/(2*sigma*sigma));
-    });
+  function previewBackgroundColor(hexColor) {
+    const src = getSourceCanvas()
+    if (!src || !previewImg.value) return
 
-    const s = ga.reduce((a,b)=>a+b,0);
-    for (let i=0;i<ga.length;i++) ga[i]/=s;
+    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
 
-    const tmp = new Uint8ClampedArray(data.length);
-    for (let y=0; y<H; y++){
-      for (let x=0; x<W; x++){
-        for (let c=0; c<4; c++){
-          let acc=0;
-          for (let k=-half;k<=half;k++){
-            const xx = Math.min(W-1, Math.max(0, x+k));
-            acc += data[(y*W+xx)*4 + c] * ga[k+half];
-          }
-          tmp[(y*W+x)*4 + c] = acc;
-        }
-      }
+    if (matteKey !== key || !matteDataURL) {
+      const MAX_PREV_PX = 2e6
+      const scale = Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
+      const w = Math.max(1, Math.round(src.width * scale))
+      const h = Math.max(1, Math.round(src.height * scale))
+
+      const off = document.createElement('canvas')
+      off.width = w
+      off.height = h
+      off.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h)
+
+      matteDataURL = deblendToTransparent(off, origBg.value)
+      matteKey = key
     }
 
-    const out = new Uint8ClampedArray(data.length);
-
-    for (let y=0; y<H; y++){
-      for (let x=0; x<W; x++){
-        for (let c=0; c<4; c++){
-          let acc=0;
-          for (let k=-half;k<=half;k++){
-            const yy = Math.min(H-1, Math.max(0, y+k));
-            acc += tmp[(yy*W+x)*4 + c] * ga[k+half];
-          }
-          out[(y*W+x)*4 + c] = acc;
-        }
-      }
-    }
-    return new ImageData(out, W, H);
+    previewImg.value.src = matteDataURL
+    previewImg.value.style.backgroundColor = hexColor
+    previewType.value = 'bgcolor'
+    previewOn.value = true
   }
 
-  function clearHighlights () {
-    const mc = markCanvas.value; if (!mc) return
-    mc.getContext('2d').clearRect(0, 0, mc.width, mc.height)
-    highlightOn.value = false
+  function endPreviewBackgroundColor() {
+    if (previewImg.value) {
+      previewImg.value.src = ''
+      previewImg.value.style.backgroundColor = ''
+    }
+    if (previewType.value === 'bgcolor') {
+      previewOn.value = false
+      previewType.value = null
+    }
   }
 
-  function getSourceCanvas () {
-    if (isPdf.value && pdfCanvas.value?.width) {
-      return pdfCanvas.value
-    }
-    const img = imgEl.value
+  async function setBackgroundColor(hexColor) {
+    pushHistory()
+    endPreviewBackgroundColor()
 
-    if (!img?.naturalWidth) {
-      return null
-    }
-    const off = document.createElement('canvas')
+    if (isPdf.value) {
+      suppressGalleryOnce.value = true
+      const pdf    = await getDocument({ data: pdfBytes() }).promise
+      const outDoc = await PDFDocument.create()
+      const bg     = origBg.value
 
-    off.width = img.naturalWidth
-    off.height = img.naturalHeight
-    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
-    return off
-  }
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p)
 
-  function sobelMag(Y, W, H){
-    const M = new Float32Array(W*H)
-    
-    for (let y = 1 ; y < H-1 ; y++){
-      for (let x = 1; x < W-1; x++){
-        const i = y*W+x
-        const ym = W*(y-1), y0=W*y, yp=W*(y+1)
-        const gx = -Y[ym+x-1]-2*Y[y0+x-1]-Y[yp+x-1] + Y[ym+x+1]+2*Y[y0+x+1]+Y[yp+x+1]
-        const gy = Y[ym+x-1]+2*Y[ym+x]+Y[ym+x+1] - Y[yp+x-1]-2*Y[yp+x]-Y[yp+x+1]
-        M[i] = Math.abs(gx)+Math.abs(gy)
+        const vp1 = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const scale = Math.min(dpiScale, maxScaleByPixels)
+        const vp  = page.getViewport({ scale })
+
+        const off = document.createElement('canvas')
+        off.width = Math.round(vp.width)
+        off.height = Math.round(vp.height)
+
+        await page.render({
+          canvasContext: off.getContext('2d', { willReadFrequently: true }),
+          viewport: vp
+        }).promise
+
+        const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, bg)
+        const pngBytes = dataURLtoU8(dataUrl)
+        const pngImg = await outDoc.embedPng(pngBytes)
+
+        const wPt = vp1.width
+        const hPt = vp1.height
+        const outPage = outDoc.addPage([wPt, hPt])
+        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
       }
-    }
-    return M
-  }
 
-  function dilate1px(mask, W, H){
-    const out = new Uint8Array(W*H)
+      const newBytes = await outDoc.save()
+      originalPdf.value = newBytes
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
+      originalFileSize.value = newBytes.length
+      originalLastModified.value = Date.now()
 
-    for (let y=0;y<H;y++){
-      for (let x=0;x<W;x++){
-        let on = 0
-
-        for (let dy=-1;dy<=1;dy++){
-          const yy = Math.min(H-1, Math.max(0, y+dy))
-
-          for (let dx=-1;dx<=1;dx++){
-            const xx = Math.min(W-1, Math.max(0, x+dx))
-            if (mask[yy*W+xx]) { 
-              on=1;
-              break 
-            }
-          }
-          if (on) {
-            break
-          }
-        }
-        out[y*W+x]=on
-      }
-    }
-    return out
-  }
-
-  function bilateralOnceRGB(S, W, H, r = 2, sigmaS = 2, sigmaR = 25) {
-    const twoσs2 = 2 * sigmaS * sigmaS
-    const twoσr2 = 2 * sigmaR * sigmaR
-    const sp = new Float32Array(2*r+1)
-    for (let i=0;i<sp.length;i++) { const x = i-r; sp[i] = Math.exp(-(x*x)/twoσs2) }
-
-    const out = new Uint8ClampedArray(W*H*4)
-    for (let y=r; y < H-r; y++) {
-      for (let x=r; x < W-r; x++) {
-        const i0 = (y*W + x)*4
-        const r0 = S[i0], g0 = S[i0+1], b0 = S[i0+2]
-        let wsum=0, sr=0, sg=0, sb=0
-
-        for (let dy=-r; dy<=r; dy++){
-          const wy = sp[dy+r]
-          for (let dx=-r; dx<=r; dx++){
-            const wx = sp[dx+r]
-            const ii = ((y+dy)*W + (x+dx))*4
-            const dr = S[ii]   - r0
-            const dg = S[ii+1] - g0
-            const db = S[ii+2] - b0
-            const w  = wy*wx * Math.exp(-(dr*dr+dg*dg+db*db)/twoσr2)
-            wsum += w; sr += S[ii]*w; sg += S[ii+1]*w; sb += S[ii+2]*w
-          }
-        }
-
-        out[i0] = sr/wsum
-        out[i0+1] = sg/wsum
-        out[i0+2] = sb/wsum
-        out[i0+3] = S[i0+3]
-      }
-    }
-
-    for (let y = 0; y < H; y++){
-      for (let x = 0 ; x < W ; x++){
-        if (y>=r && y<H-r && x>=r && x<W-r) {
-          continue
-        }
-
-        const i = (y*W + x)*4
-        out[i]=S[i]; out[i+1]=S[i+1]; out[i+2]=S[i+2]; out[i+3]=S[i+3]
-      }
-    }
-    return out
-  }
-
-  function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
-    if (highlightOn.value) {
-      clearHighlights(); return
-    }
-
-    const { diffThresh = 12, lowEdge = 40, highEdge = 150, dilate = 1} = opts
-
-    const src = getSourceCanvas(), mc = markCanvas.value
-    if (!src || !mc) {
+      emit('update:preview', preview.value)
+      emit('update:bgcolor', hexColor)
+      await renderPdfPage()
+      origBg.value = hexToRgb(hexColor)
       return
     }
 
-    const W = src.width, H = src.height
-    if (mc.width !== W || mc.height !== H) {
-      mc.width = W; mc.height = H
-    }
+    const img = imgEl.value; if (!img) return
+    const w = img.naturalWidth, h = img.naturalHeight
+    const off = document.createElement('canvas')
+    off.width = w; off.height = h
+    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, w, h)
 
-    const sctx = src.getContext('2d', { willReadFrequently: true })
-    const srcIm = sctx.getImageData(0,0,W,H)
-    const S = srcIm.data
-    const B = bilateralOnceRGB(S, W, H, 2, 2, 25)
-
-    const Y = new Float32Array(W*H)
-    for (let i=0,j=0;i<S.length;i+=4,j++) Y[j] = 0.299*S[i] + 0.587*S[i+1] + 0.114*S[i+2]
-    const G = sobelMag(Y, W, H)
-
-    const near = new Uint8Array(W*H)
-    const core = new Uint8Array(W*H)
-    for (let i=0;i<near.length;i++) {
-      if (G[i] > lowEdge) {
-        near[i]=1
-      } 
-      if (G[i] > highEdge) {
-        core[i]=1 
-      }
-    }
-
-    let nearDil = near
-    for (let k=0;k<dilate;k++) {
-      nearDil = dilate1px(nearDil, W, H)
-    }
-
-    const mask = new Uint8Array(W*H)
-    for (let i=0,j=0;i<S.length;i+=4,j++){
-      const d = (Math.abs(S[i]-B[i]) + Math.abs(S[i+1]-B[i+1]) + Math.abs(S[i+2]-B[i+2])) / 3
-      if (d > diffThresh && nearDil[j] && !core[j]) {
-        mask[j] = 1
-      }
-    }
-
-    const cr = parseInt(color.slice(1,3),16)
-    const cg = parseInt(color.slice(3,5),16)
-    const cb = parseInt(color.slice(5,7),16)
-    const A = 200
-
-    const octx = mc.getContext('2d')
-    const oIm = octx.createImageData(W,H)
-    const O = oIm.data
-
-    for (let y=0;y<H;y++){
-      for (let x=0;x<W;x++){
-        const id = y*W + x
-        if (!mask[id]) {
-          continue
-        }
-
-        const k = id*4
-        O[k]=cr; O[k+1]=cg; O[k+2]=cb; O[k+3]=A
-      }
-    }
-    octx.putImageData(oIm,0,0)
-    highlightOn.value = true
+    const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, origBg.value)
+    preview.value = dataUrl
+    emit('update:preview', dataUrl)
+    emit('update:bgcolor', hexColor)
+    origBg.value = hexToRgb(hexColor)
   }
 
-  function grayscaleCanvas(canvas, strength = 1, mode = 'bt601') {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    const w = canvas.width, h = canvas.height
-    const im = ctx.getImageData(0, 0, w, h)
-    const d = im.data
+  function colorToAlphaAndFillCanvas(canvas, hexColor, bgRGB) {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    const width = canvas.width
+    const height = canvas.height
+    const imageData = context.getImageData(0, 0, width, height)
+    const data = imageData.data
 
-    let wr = 0.299, wg = 0.587, wb = 0.114
-    if (mode === 'bt709') {
-      wr = 0.2126; wg = 0.7152; wb = 0.0722
+    const srgbToLinear = (value) => {
+      value /= 255
+      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
+    }
+    const linearToSrgb = (value) => {
+      value = value <= 0.0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - 0.055
+      return Math.max(0, Math.min(255, Math.round(value * 255)))
+    }
+
+    const background = bgRGB || { r: data[0], g: data[1], b: data[2] }
+    const baseRedLinear = srgbToLinear(background.r)
+    const baseGreenLinear = srgbToLinear(background.g)
+    const baseBlueLinear = srgbToLinear(background.b)
+
+    const tolerance = 0.08
+
+    for (let index = 0; index < data.length; index += 4) {
+      const srcRedLinear = srgbToLinear(data[index])
+      const srcGreenLinear = srgbToLinear(data[index + 1])
+      const srcBlueLinear = srgbToLinear(data[index + 2])
+
+      const alphaFromRed = baseRedLinear < 1e-6
+        ? (srcRedLinear > baseRedLinear ? 1 : 0)
+        : (srcRedLinear >= baseRedLinear
+            ? (srcRedLinear - baseRedLinear) / (1 - baseRedLinear)
+            : (baseRedLinear - srcRedLinear) / baseRedLinear)
+
+      const alphaFromGreen = baseGreenLinear < 1e-6
+        ? (srcGreenLinear > baseGreenLinear ? 1 : 0)
+        : (srcGreenLinear >= baseGreenLinear
+            ? (srcGreenLinear - baseGreenLinear) / (1 - baseGreenLinear)
+            : (baseGreenLinear - srcGreenLinear) / baseGreenLinear)
+
+      const alphaFromBlue = baseBlueLinear < 1e-6
+        ? (srcBlueLinear > baseBlueLinear ? 1 : 0)
+        : (srcBlueLinear >= baseBlueLinear
+            ? (srcBlueLinear - baseBlueLinear) / (1 - baseBlueLinear)
+            : (baseBlueLinear - srcBlueLinear) / baseBlueLinear)
+
+      let alpha = Math.max(alphaFromRed, alphaFromGreen, alphaFromBlue)
+      if (tolerance > 0) {
+        alpha = Math.max(0, Math.min(1, (alpha - tolerance) / (1 - tolerance)))
+      }
+
+      let foreRedLinear = 0, foreGreenLinear = 0, foreBlueLinear = 0
+      if (alpha > 1e-5) {
+        foreRedLinear = (srcRedLinear   - (1 - alpha) * baseRedLinear)   / alpha
+        foreGreenLinear = (srcGreenLinear - (1 - alpha) * baseGreenLinear) / alpha
+        foreBlueLinear = (srcBlueLinear  - (1 - alpha) * baseBlueLinear)  / alpha
+      }
+
+      data[index] = linearToSrgb(foreRedLinear)
+      data[index + 1] = linearToSrgb(foreGreenLinear)
+      data[index + 2] = linearToSrgb(foreBlueLinear)
+      data[index + 3] = Math.round(alpha * 255)
+    }
+
+    context.putImageData(imageData, 0, 0)
+    context.globalCompositeOperation = 'destination-over'
+    context.fillStyle = hexColor
+    context.fillRect(0, 0, width, height)
+    context.globalCompositeOperation = 'source-over'
+
+    return canvas.toDataURL('image/png')
+  }
+
+  function deblendToTransparent(canvas, bgRGB) {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    const { width, height } = canvas
+    const imageData = context.getImageData(0, 0, width, height)
+    const data = imageData.data
+
+    const srgbToLinear = v => {
+      v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    }
+    const linearToSrgb = v => {
+      v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055
+      return Math.max(0, Math.min(255, Math.round(v * 255)))
+    }
+
+    const br = srgbToLinear(bgRGB.r)
+    const bg = srgbToLinear(bgRGB.g)
+    const bb = srgbToLinear(bgRGB.b)
+    const tol = 0.08
+
+    for (let i = 0; i < data.length; i += 4) {
+      const rL = srgbToLinear(data[i])
+      const gL = srgbToLinear(data[i+1])
+      const bL = srgbToLinear(data[i+2])
+
+      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : (rL >= br ? (rL - br) / (1 - br) : (br - rL) / br)
+      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : (gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg)
+      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : (bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb)
+      let a = Math.max(aR, aG, aB)
+      if (tol > 0) a = Math.max(0, Math.min(1, (a - tol) / (1 - tol)))
+
+      let fr = 0, fg = 0, fb = 0
+      if (a > 1e-5) {
+        fr = (rL - (1 - a) * br) / a
+        fg = (gL - (1 - a) * bg) / a
+        fb = (bL - (1 - a) * bb) / a
+      }
+
+      data[i]   = linearToSrgb(fr)
+      data[i+1] = linearToSrgb(fg)
+      data[i+2] = linearToSrgb(fb)
+      data[i+3] = Math.round(a * 255)
+    }
+
+    context.putImageData(imageData, 0, 0)
+    return canvas.toDataURL('image/png')
+  }
+
+  function hexToRgb(hex) {
+    let c = (hex || '').replace('#','').trim()
+    if (c.length === 3) c = c.split('').map(ch => ch + ch).join('')
+
+    return {
+      r: parseInt(c.slice(0,2),16) || 0,
+      g: parseInt(c.slice(2,4),16) || 0,
+      b: parseInt(c.slice(4,6),16) || 0,
+    }
+  }
+
+  function rgbToHex({ r, g, b }) {
+    const to2 = v => v.toString(16).padStart(2,'0')
+    return '#' + to2(r) + to2(g) + to2(b)
+  }
+
+  function previewGrayscale({ strength = 1 } = {}) {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (!node) {
+      return
     }
 
     const s = Math.max(0, Math.min(1, strength))
-    for (let i = 0; i < d.length; i += 4) {
-      const Y = d[i] * wr + d[i + 1] * wg + d[i + 2] * wb
-      d[i] = Math.round(d[i] + (Y - d[i]) * s)
-      d[i + 1] = Math.round(d[i + 1] + (Y - d[i + 1]) * s)
-      d[i + 2] = Math.round(d[i + 2] + (Y - d[i + 2]) * s)
+    node.style.filter = `grayscale(${s})`
+    previewType.value = 'grayscale'
+    previewOn.value = true
+  }
+
+  function endPreviewGrayscale() {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (node) {
+      node.style.filter = ''
     }
-    ctx.putImageData(im, 0, 0)
+
+    if (previewType.value === 'grayscale') {
+      previewOn.value = false
+      previewType.value = null
+    }
   }
 
   async function applyGrayscale({ mode = 'bt601', strength = 1 } = {}) {
@@ -1830,86 +1633,283 @@
     })
   }
 
-  function clearAllPreviews () {
-    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+  function grayscaleCanvas(canvas, strength = 1, mode = 'bt601') {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const w = canvas.width, h = canvas.height
+    const im = ctx.getImageData(0, 0, w, h)
+    const d = im.data
 
-    if (node) {
-      node.style.filter = ''
-    }
-    if (previewImg.value) {
-      previewImg.value.src = ''
-    }
-    previewOn.value = false
-    previewType.value = null
-  }
-
-  function previewGrayscale({ strength = 1 } = {}) {
-    const node = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (!node) {
-      return
+    let wr = 0.299, wg = 0.587, wb = 0.114
+    if (mode === 'bt709') {
+      wr = 0.2126; wg = 0.7152; wb = 0.0722
     }
 
     const s = Math.max(0, Math.min(1, strength))
-    node.style.filter = `grayscale(${s})`
-    previewType.value = 'grayscale'
-    previewOn.value = true
+    for (let i = 0; i < d.length; i += 4) {
+      const Y = d[i] * wr + d[i + 1] * wg + d[i + 2] * wb
+      d[i] = Math.round(d[i] + (Y - d[i]) * s)
+      d[i + 1] = Math.round(d[i + 1] + (Y - d[i + 1]) * s)
+      d[i + 2] = Math.round(d[i + 2] + (Y - d[i + 2]) * s)
+    }
+    ctx.putImageData(im, 0, 0)
   }
 
-  function endPreviewGrayscale() {
-    const node = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (node) {
-      node.style.filter = ''
+  async function estimateExport({ format = 'png' } = {}) {
+    format = String(format || 'png').toLowerCase()
+
+    if (isPdf.value) {
+      if (format === 'pdf') {
+        const srcDoc = await PDFDocument.load(pdfBytes())
+        const outDoc = await PDFDocument.create()
+
+        const srcPage = srcDoc.getPages()[currentPage.value - 1]
+        const { width: pageW, height: pageH } = srcPage.getSize()
+
+        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+        const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
+
+        const emb = await outDoc.embedPage(srcPage, {
+          left: x, bottom: y, right: x + width, top: y + height
+        })
+        outDoc.addPage([width, height]).drawPage(emb, { x: 0, y: 0 })
+
+        const bytes = await outDoc.save()
+        const blob  = new Blob([bytes], { type: 'application/pdf' })
+        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
+      }
+
+      const src = getSourceCanvas()
+      if (!src) return { blob: null, sizeBytes: 0, ext: format }
+
+      const sx = overlayW.value > 0 ? overlayX.value : 0
+      const sy = overlayH.value > 0 ? overlayY.value : 0
+      const sw = overlayW.value > 0 ? overlayW.value : src.width
+      const sh = overlayH.value > 0 ? overlayH.value : src.height
+
+      const c = document.createElement('canvas')
+      c.width = sw; c.height = sh
+      c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh)
+
+      const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
+      const blob  = await canvasToBlob(c, mime)
+      const size  = blob ? blob.size : 0
+      return { blob, sizeBytes: size, ext: format, mime }
     }
 
-    if (previewType.value === 'grayscale') {
-      previewOn.value = false
-      previewType.value = null
-    }
+    const img = imgEl.value
+    if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
+
+    const sx = overlayW.value > 0 ? overlayX.value : 0
+    const sy = overlayH.value > 0 ? overlayY.value : 0
+    const sw = overlayW.value > 0 ? overlayW.value : img.naturalWidth
+    const sh = overlayH.value > 0 ? overlayH.value : img.naturalHeight
+
+    const c = document.createElement('canvas')
+    c.width = sw; c.height = sh
+    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+
+    const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
+    const blob  = await canvasToBlob(c, mime)
+    const size  = blob ? blob.size : 0
+    return { blob, sizeBytes: size, ext: format, mime }
   }
 
-  function undo() {
-    const snap = history.pop()
-    if (!snap) {
+  async function exportFile({ name = 'export', format = 'png' } = {}) {
+    const JPG_QUALITY = 1
+    const ext = extOf(format)
+    const cleanName = name.replace(/[\\/:*?"<>|]/g, '').trim() || 'export'
+    const filename = `${cleanName}.${ext}`
+
+    if (isPdf.value) {
+      if (format === 'pdf') {
+        const srcDoc = await PDFDocument.load(pdfBytes())
+        const outDoc = await PDFDocument.create()
+        const page = (await srcDoc.getPages())[currentPage.value - 1]
+        const { width: pageW, height: pageH } = page.getSize()
+        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+
+        let box
+        if (hasOverlay) {
+          const { x, y, width, height } = overlayBoxPdfCoords()
+          box = { x, y, w: width, h: height }
+        } else {
+          box = { x: 0, y: 0, w: pageW, h: pageH }
+        }
+
+        const embedded = await outDoc.embedPage(page, {
+          left: box.x, bottom: box.y, right: box.x + box.w, top: box.y + box.h,
+        })
+        outDoc.addPage([box.w, box.h]).drawPage(embedded, { x: 0, y: 0 })
+
+        const bytes = await outDoc.save()
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+        triggerDownload(url, filename)
+        return
+      }
+
+      const pdf = await getDocument({ data: pdfBytes() }).promise
+      const page = await pdf.getPage(currentPage.value)
+
+      const vp1 = page.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const scale = Math.min(dpiScale, maxScaleByPixels)
+      const vp = page.getViewport({ scale })
+
+      const off = document.createElement('canvas')
+      off.width = Math.round(vp.width)
+      off.height = Math.round(vp.height)
+      await page.render({ canvasContext: off.getContext('2d', { willReadFrequently: true }), viewport: vp }).promise
+
+      const factor = (scale / (pdfRenderScale.value || 1))
+      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+      const ox = hasOverlay ? Math.round(overlayX.value * factor) : 0
+      const oy = hasOverlay ? Math.round(overlayY.value * factor) : 0
+      const ow = hasOverlay ? Math.round(overlayW.value * factor) : off.width
+      const oh = hasOverlay ? Math.round(overlayH.value * factor) : off.height
+
+      const out = document.createElement('canvas')
+      out.width = ow; out.height = oh
+      const octx = out.getContext('2d')
+      octx.drawImage(off, ox, oy, ow, oh, 0, 0, ow, oh)
+
+      let url
+      if (format === 'png') {
+        url = out.toDataURL('image/png')
+      } else {
+        const white = document.createElement('canvas')
+        white.width = ow; white.height = oh
+        const wctx = white.getContext('2d')
+        wctx.fillStyle = '#ffffff'
+        wctx.fillRect(0, 0, ow, oh)
+        wctx.drawImage(out, 0, 0)
+        url = white.toDataURL('image/jpeg', JPG_QUALITY)
+      }
+      triggerDownload(url, filename)
       return
     }
 
-    restoreSnapshot(snap)
-  }
+    const img = imgEl.value
+    if (!img?.naturalWidth) return
 
-  function resetToOriginal() {
-    if (!origSnapshot.value) {
+    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+    const x = hasOverlay ? overlayX.value : 0
+    const y = hasOverlay ? overlayY.value : 0
+    const w = hasOverlay ? overlayW.value : maxW.value
+    const h = hasOverlay ? overlayH.value : maxH.value
+
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d')
+
+    if (format === 'jpg') {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+    }
+    ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
+
+    if (format === 'pdf') {
+      const pngBytes = dataURLtoU8(c.toDataURL('image/png'))
+      const outDoc = await PDFDocument.create()
+      const imgPng = await outDoc.embedPng(pngBytes)
+      const page = outDoc.addPage([w, h])
+      page.drawImage(imgPng, { x: 0, y: 0, width: w, height: h })
+      const bytes = await outDoc.save()
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+      triggerDownload(url, filename)
       return
     }
 
-    history.length = 0
-    restoreSnapshot(origSnapshot.value)
+    const url = (format === 'png')
+      ? c.toDataURL('image/png')
+      : c.toDataURL('image/jpeg', JPG_QUALITY)
+
+    triggerDownload(url, filename)
   }
 
-  function clear() {
-    clearAllPreviews()
-    preview.value = null
-    isPdf.value = false
-    overlayX.value = 0
-    overlayY.value = 0
-    overlayW.value = 0
-    overlayH.value = 0
-    currentPage.value = 1
-    totalPages.value = 1
-    suppressGalleryOnce.value = false
+  async function download() {
+    if (isPdf.value) {
+      const srcDoc = await PDFDocument.load(pdfBytes())
+      const outDoc = await PDFDocument.create()
 
-    if (pz) {
-      pz.dispose()
-      pz = null
+      const pages   = srcDoc.getPages()
+      const srcPage = pages[currentPage.value - 1]
+      const { width: pageW, height: pageH } = srcPage.getSize()
+
+      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+      const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
+
+      const embedded = await outDoc.embedPage(srcPage, {
+        left: x,
+        bottom: y,
+        right: x + width,
+        top: y + height,
+      })
+
+      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
+
+      const bytes = await outDoc.save()
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `page-${currentPage.value}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+      return
     }
 
-    panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'' })
-    initialScale.value = 1
-    fileInput.value && (fileInput.value.value = '')
-
-    emit('update:preview', null)
-    emit('update:meta', null)
-    emit('update:overlay', { width:0, height:0, x:0, y:0 })
+    const link = document.createElement('a')
+    link.href = preview.value
+    link.download = 'edited.png'
+    link.click()
   }
+
+  function triggerDownload(url, filename) {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function canvasToBlob(canvas, type) {
+    return new Promise(res => canvas.toBlob(b => res(b), type))
+  }
+
+  function extOf(fmt) {
+    return fmt === 'jpg' ? 'jpg' : (fmt === 'png' ? 'png' : 'pdf')
+  }
+
+  function dataURLtoU8(dataURL) {
+    const b64 = dataURL.split(',')[1]
+    const bin = atob(b64)
+    const u8  = new Uint8Array(bin.length)
+
+    for (let i=0;i<bin.length;i++) {
+      u8[i] = bin.charCodeAt(i)
+    }
+    return u8
+  }
+
+  const overlayStyle = computed(() => {
+    const s = initialScale.value || 1
+
+    return {
+      position: 'absolute',
+      left: `${overlayX.value * s}px`,
+      top: `${overlayY.value * s}px`,
+      width: `${overlayW.value * s}px`,
+      height: `${overlayH.value * s}px`,
+      border: '2px dashed #ff3b30',
+      boxSizing: 'border-box',
+      pointerEvents: 'all',
+      zIndex: 5,
+    }
+  })
 
   defineExpose({
     setBackgroundColor,
