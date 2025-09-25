@@ -1201,8 +1201,8 @@
         if (!visited[y*width+x]) {
           return false;
         }
-        return true
       }
+      return true
     }
 
     while (left < right  && colAllBg(left)) {
@@ -1911,6 +1911,11 @@
     }
   })
 
+  function overlayOrFull() { 
+    const has = overlayW.value > 0 && overlayH.value > 0 
+    return has ? { x: overlayX.value, y: overlayY.value, w: overlayW.value, h: overlayH.value } : { x: 0, y: 0, w: maxW.value, h: maxH.value } 
+  }
+  
   defineExpose({
     setBackgroundColor,
     previewCropToContent,
