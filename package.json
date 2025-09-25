@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && gh-pages -d dist -b gh-pages",
+    "postbuild": "node -e \"const fs=require('fs');fs.copyFileSync('docs/index.html','docs/404.html')\"",
     "preview": "vite preview",
+    "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
