@@ -1,7 +1,7 @@
 <template>
     <div class="metadata">
         <button class="metadata-toggle" @click="collapsed = !collapsed">
-            <span>Metadata</span>
+            <span>Properties</span>
             <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
         </button>
 
@@ -23,7 +23,10 @@
     const collapsed = ref(true)
 
     function formatSize(b) {
-        if (!b) return '—'
+        if (!b) {
+            return '—'
+        }
+        
         const kb = b/1024
         return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb/1024).toFixed(1)} MB`
     }

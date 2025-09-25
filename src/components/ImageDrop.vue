@@ -1,6 +1,9 @@
 <template>
   <div
     class="dropField"
+    :style="{ paddingRight: rightGap,
+      marginTop: topGap,
+       height: `calc(100vh - ${topGap})`}"
     @dragover.prevent
     @dragenter.prevent
     @drop.prevent="handleDrop"
@@ -10,7 +13,7 @@
       Click or drag and drop an image or PDF here
     </p>
 
-    <div v-else class="preview-container">
+    <div v-else class="preview-container" ref="previewWrap">
       <div ref="panCont" class="panzoom-container">
         <canvas
           v-if="isPdf"
@@ -27,6 +30,13 @@
           alt="Preview"
           draggable="false"
           @load="initPanzoom"
+        />
+
+        <img
+          ref="previewImg"
+          class="preview-layer"
+          v-show="previewType==='bgcolor' && previewOn"
+          alt="Preview"
         />
 
         <canvas ref="markCanvas" class="mark-canvas"></canvas>
@@ -59,7 +69,7 @@
 </template>
 
 <script setup>
-  import { ref, nextTick, computed } from 'vue'
+  import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
   import panzoom from 'panzoom'
   import * as pdfjsLib from 'pdfjs-dist'
   import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
@@ -99,22 +109,369 @@
   const origBg = ref({ r: 255, g: 255, b: 255 })
   const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor'])
 
+  const PDF_PREVIEW_DPI = 600;
+  const PDF_RASTER_OPS_DPI = 600;
+  const MAX_CANVAS_PIXELS = 25e6;
+  const pdfRenderScale = ref(1);
+  const previewWrap = ref(null)
+
+  const previewImg   = ref(null)
+  const previewOn    = ref(false)
+  const previewType  = ref(null)
+  let matteKey = null
+  let matteDataURL = null
+
+  const originalFileType = ref('')
+  const history = []
+  const origSnapshot = ref(null)
+  const MAX_HISTORY = 30
+
+  const props = defineProps({
+    rightGap: { type: String, default: 'min(30vw, 300px)' },
+    topGap: { type: String, default: '0px' }
+  })
+
+  let ro = null
+  onMounted(() => {
+    ro = new ResizeObserver(() => adjustForContainerResize())
+    if (previewWrap.value) {
+      ro.observe(previewWrap.value)
+    }
+  })
+  onUnmounted(() => {
+    ro?.disconnect(); ro = null
+  })
+
+  watch(() => props.rightGap, async () => {
+    await nextTick()
+    adjustForContainerResize()
+  })
+
+  watch(() => props.topGap, async () => {
+    await nextTick()
+    adjustForContainerResize()
+  })
+
+
+  function makeSnapshot() {
+    if (isPdf.value) {
+      return {
+        kind: 'pdf',
+        bytes: pdfBytes(),
+        name: originalFileName.value,
+        type: 'application/pdf',
+        size: originalFileSize.value,
+        lastModified: originalLastModified.value,
+        page: currentPage.value,
+      }
+
+    } else {
+      return {
+        kind: 'image',
+        dataUrl: preview.value,
+        name: originalFileName.value,
+        type: originalFileType.value || 'image/png',
+        size: preview.value ? atob((preview.value.split(',')[1]||'')).length : 0,
+        lastModified: originalLastModified.value || Date.now(),
+      }
+
+    }
+  }
+
+  async function loadExternalFile(file) {
+    if (!file) {
+      return
+    }
+
+    if (file.type === 'application/pdf') {
+      isPdf.value = true
+      await loadPdf(file)
+
+    } else {
+      isPdf.value = false
+      loadImage(file)
+    }
+  }
+
+  function restoreSnapshot(snap) {
+    if (!snap) {
+      return
+    }
+
+    if (snap.kind === 'pdf') {
+      originalPdf.value = snap.bytes
+      originalFileName.value = snap.name
+      originalFileSize.value = snap.size
+      originalLastModified.value = snap.lastModified
+      isPdf.value = true
+
+      preview.value = URL.createObjectURL(new Blob([snap.bytes], { type: 'application/pdf' }))
+      emit('update:preview', preview.value)
+      renderPdfPage(snap.page || 1)
+    } else {
+      isPdf.value = false
+      originalFileName.value = snap.name
+      originalFileType.value = snap.type
+      originalFileSize.value = snap.size
+      originalLastModified.value = snap.lastModified
+
+      preview.value = snap.dataUrl
+      emit('update:preview', preview.value)
+
+      const img = new Image()
+      img.onload = () => {
+        emit('update:meta', {
+          name: snap.name,
+          type: snap.type,
+          size: snap.size,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+          lastModified: snap.lastModified,
+        })
+        setupOverlay(img.naturalWidth, img.naturalHeight)
+        detectBackground()
+        initPanzoom()
+      }
+      img.src = snap.dataUrl
+    }
+  }
+
+  function pushHistory() {
+    if (!preview.value && !isPdf.value) {
+      return
+    }
+
+    const snap = makeSnapshot()
+    history.push(snap)
+
+    if (history.length > MAX_HISTORY) {
+      history.shift()
+    }
+  }
+
+  function canvasToBlob(canvas, type) {
+    return new Promise(res => canvas.toBlob(b => res(b), type))
+  }
+
+  async function estimateExport({ format = 'png' } = {}) {
+    format = String(format || 'png').toLowerCase()
+
+    if (isPdf.value) {
+      if (format === 'pdf') {
+        const srcDoc = await PDFDocument.load(pdfBytes())
+        const outDoc = await PDFDocument.create()
+
+        const srcPage = srcDoc.getPages()[currentPage.value - 1]
+        const { width: pageW, height: pageH } = srcPage.getSize()
+
+        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+        const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
+
+        const emb = await outDoc.embedPage(srcPage, {
+          left: x, bottom: y, right: x + width, top: y + height
+        })
+        outDoc.addPage([width, height]).drawPage(emb, { x: 0, y: 0 })
+
+        const bytes = await outDoc.save()
+        const blob  = new Blob([bytes], { type: 'application/pdf' })
+        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
+      }
+
+      const src = getSourceCanvas()
+      if (!src) return { blob: null, sizeBytes: 0, ext: format }
+
+      const sx = overlayW.value > 0 ? overlayX.value : 0
+      const sy = overlayH.value > 0 ? overlayY.value : 0
+      const sw = overlayW.value > 0 ? overlayW.value : src.width
+      const sh = overlayH.value > 0 ? overlayH.value : src.height
+
+      const c = document.createElement('canvas')
+      c.width = sw; c.height = sh
+      c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh)
+
+      const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
+      const blob  = await canvasToBlob(c, mime)
+      const size  = blob ? blob.size : 0
+      return { blob, sizeBytes: size, ext: format, mime }
+    }
+
+    const img = imgEl.value
+    if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
+
+    const sx = overlayW.value > 0 ? overlayX.value : 0
+    const sy = overlayH.value > 0 ? overlayY.value : 0
+    const sw = overlayW.value > 0 ? overlayW.value : img.naturalWidth
+    const sh = overlayH.value > 0 ? overlayH.value : img.naturalHeight
+
+    const c = document.createElement('canvas')
+    c.width = sw; c.height = sh
+    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+
+    const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
+    const blob  = await canvasToBlob(c, mime)
+    const size  = blob ? blob.size : 0
+    return { blob, sizeBytes: size, ext: format, mime }
+  }
+
+  function triggerDownload(url, filename) {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  function shouldReplace() {
+    if (!preview.value) {
+      return true
+    }
+
+    return window.confirm('Replace the current file? Unsaved edits will be lost.')
+  }
+
+  function extOf(fmt) {
+    return fmt === 'jpg' ? 'jpg' : (fmt === 'png' ? 'png' : 'pdf')
+  }
+
+  async function exportFile({ name = 'export', format = 'png' } = {}) {
+    const JPG_QUALITY = 1
+    const ext = extOf(format)
+    const cleanName = name.replace(/[\\/:*?"<>|]/g, '').trim() || 'export'
+    const filename = `${cleanName}.${ext}`
+
+    if (isPdf.value) {
+      if (format === 'pdf') {
+        const srcDoc = await PDFDocument.load(pdfBytes())
+        const outDoc = await PDFDocument.create()
+        const page = (await srcDoc.getPages())[currentPage.value - 1]
+        const { width: pageW, height: pageH } = page.getSize()
+        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+
+        let box
+        if (hasOverlay) {
+          const { x, y, width, height } = overlayBoxPdfCoords()
+          box = { x, y, w: width, h: height }
+        } else {
+          box = { x: 0, y: 0, w: pageW, h: pageH }
+        }
+
+        const embedded = await outDoc.embedPage(page, {
+          left: box.x, bottom: box.y, right: box.x + box.w, top: box.y + box.h,
+        })
+        outDoc.addPage([box.w, box.h]).drawPage(embedded, { x: 0, y: 0 })
+
+        const bytes = await outDoc.save()
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+        triggerDownload(url, filename)
+        return
+      }
+
+      const pdf = await getDocument({ data: pdfBytes() }).promise
+      const page = await pdf.getPage(currentPage.value)
+
+      const vp1 = page.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const scale = Math.min(dpiScale, maxScaleByPixels)
+      const vp = page.getViewport({ scale })
+
+      const off = document.createElement('canvas')
+      off.width = Math.round(vp.width)
+      off.height = Math.round(vp.height)
+      await page.render({ canvasContext: off.getContext('2d', { willReadFrequently: true }), viewport: vp }).promise
+
+      const factor = (scale / (pdfRenderScale.value || 1))
+      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+      const ox = hasOverlay ? Math.round(overlayX.value * factor) : 0
+      const oy = hasOverlay ? Math.round(overlayY.value * factor) : 0
+      const ow = hasOverlay ? Math.round(overlayW.value * factor) : off.width
+      const oh = hasOverlay ? Math.round(overlayH.value * factor) : off.height
+
+      const out = document.createElement('canvas')
+      out.width = ow; out.height = oh
+      const octx = out.getContext('2d')
+      octx.drawImage(off, ox, oy, ow, oh, 0, 0, ow, oh)
+
+      let url
+      if (format === 'png') {
+        url = out.toDataURL('image/png')
+      } else {
+        const white = document.createElement('canvas')
+        white.width = ow; white.height = oh
+        const wctx = white.getContext('2d')
+        wctx.fillStyle = '#ffffff'
+        wctx.fillRect(0, 0, ow, oh)
+        wctx.drawImage(out, 0, 0)
+        url = white.toDataURL('image/jpeg', JPG_QUALITY)
+      }
+      triggerDownload(url, filename)
+      return
+    }
+
+    const img = imgEl.value
+    if (!img?.naturalWidth) return
+
+    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+    const x = hasOverlay ? overlayX.value : 0
+    const y = hasOverlay ? overlayY.value : 0
+    const w = hasOverlay ? overlayW.value : maxW.value
+    const h = hasOverlay ? overlayH.value : maxH.value
+
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d')
+
+    if (format === 'jpg') {
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, w, h)
+    }
+    ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
+
+    if (format === 'pdf') {
+      const pngBytes = dataURLtoU8(c.toDataURL('image/png'))
+      const outDoc = await PDFDocument.create()
+      const imgPng = await outDoc.embedPng(pngBytes)
+      const page = outDoc.addPage([w, h])
+      page.drawImage(imgPng, { x: 0, y: 0, width: w, height: h })
+      const bytes = await outDoc.save()
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+      triggerDownload(url, filename)
+      return
+    }
+
+    const url = (format === 'png')
+      ? c.toDataURL('image/png')
+      : c.toDataURL('image/jpeg', JPG_QUALITY)
+
+    triggerDownload(url, filename)
+  }
+
   function makeDocSig() {
     return `${originalFileName.value}|${originalFileSize.value}|${originalLastModified.value}`
   }
 
   function openFilePicker() {
-    if (!preview.value) fileInput.value.click()
+    if (!preview.value) {
+      fileInput.value.click()
+    }
   }
 
   function handleFileChange(e) {
     const f = e.target.files[0]
     if (!f) return
 
+    if (!shouldReplace()) { 
+      e.target.value = ''
+      return
+    }
+
     if (f.type === 'application/pdf') {
       isPdf.value = true
       loadPdf(f)
-    }else {
+    } else {
       isPdf.value = false
       loadImage(f)
     }
@@ -125,18 +482,30 @@
       f => f.type.startsWith('image/') || f.type === 'application/pdf'
     )
 
-    if (!f) return
+    if (!f) {
+      return
+    }
+
+
+    if (!shouldReplace()) {
+      return
+    }
 
     if (f.type === 'application/pdf') {
       isPdf.value = true
       loadPdf(f)
-    }else {
+
+    } else {
       isPdf.value = false
       loadImage(f)
     }
   }
 
   function loadImage(file) {
+    originalFileName.value = file.name
+    originalFileType.value = file.type
+    originalFileSize.value = file.size
+    originalLastModified.value = file.lastModified || Date.now()
     const reader = new FileReader()
 
     reader.onload = ev => {
@@ -153,6 +522,8 @@
         })
         setupOverlay(img.naturalWidth, img.naturalHeight)
         detectBackground()
+        origSnapshot.value = makeSnapshot()
+        history.length = 0
       }
     }
     reader.readAsDataURL(file)
@@ -180,23 +551,31 @@
 
     await nextTick()
     await renderPdfPage(1)
+    origSnapshot.value = makeSnapshot()
+    history.length = 0
   }
 
-  async function renderPdfPage(pageNo = currentPage.value || 1, scale = 1) {
+  async function renderPdfPage(pageNo = currentPage.value || 1, dpi = PDF_PREVIEW_DPI) {
     await nextTick()
 
     const pdf = await getDocument({ data: pdfBytes() }).promise
-    totalPages.value = pdf.numPages
+    totalPages.value  = pdf.numPages
     currentPage.value = Math.min(Math.max(1, pageNo), totalPages.value)
 
     const page = await pdf.getPage(currentPage.value)
-    const viewport = page.getViewport({ scale })
+    const vp1 = page.getViewport({ scale: 1 })
+    const dpiScale = Math.max(1, dpi / 72)
+    const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+    const targetScale = Math.min(dpiScale, maxScaleByPixels)
+
+    const viewport = page.getViewport({ scale: targetScale })
+    pdfRenderScale.value = targetScale
 
     const canvas = pdfCanvas.value
-    canvas.width = viewport.width
-    canvas.height = viewport.height
+    canvas.width  = Math.round(viewport.width)
+    canvas.height = Math.round(viewport.height)
 
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise
+    await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport }).promise
 
     setupOverlay(viewport.width, viewport.height)
 
@@ -214,7 +593,6 @@
     })
 
     suppressGalleryOnce.value = false
-
     detectBackground()
     await initPanzoom()
   }
@@ -234,17 +612,22 @@
   async function initPanzoom() {
     await nextTick()
     const elem = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (!elem) return
+    if (!elem) {
+      return
+    }
 
     const natW = isPdf.value ? elem.width : elem.naturalWidth
     const natH = isPdf.value ? elem.height : elem.naturalHeight
 
-    const wrap = panCont.value.parentElement
+    const wrap = previewWrap.value
     const scaleW = wrap.clientWidth / natW
     const scaleH = wrap.clientHeight / natH
     initialScale.value = Math.min(scaleW, scaleH)
 
-    if (pz) { pz.dispose(); pz = null }
+    if (pz) {
+      pz.dispose(); pz = null
+    }
+
     panCont.value.style.transform = 'translate(0px, 0px) scale(1)'
 
     panCont.value.style.width = `${natW * initialScale.value}px`
@@ -257,6 +640,48 @@
     const mctx = markCanvas.value.getContext('2d')
     mctx.clearRect(0, 0, natW, natH)
     highlightOn.value = false
+
+    endPreviewBackgroundColor()
+  }
+
+  function adjustForContainerResize () {
+    const elem = isPdf.value ? pdfCanvas.value : imgEl.value
+    const wrap = previewWrap.value
+    if (!elem || !wrap || !panCont.value) {
+      return
+    }
+
+    const natW = isPdf.value ? elem.width : elem.naturalWidth
+    const natH = isPdf.value ? elem.height : elem.naturalHeight
+
+    const oldInit = initialScale.value || 1
+    const oldT = pz ? pz.getTransform() : { x: 0, y: 0, scale: 1 }
+
+    const cx = wrap.clientWidth  / 2
+    const cy = wrap.clientHeight / 2
+
+    const contentX = (cx - oldT.x) / (oldInit * oldT.scale)
+    const contentY = (cy - oldT.y) / (oldInit * oldT.scale)
+
+    const newInit = Math.min(wrap.clientWidth / natW, wrap.clientHeight / natH) || 1
+    initialScale.value = newInit
+
+    if (pz) {
+      pz.dispose(); pz = null
+    }
+
+    panCont.value.style.transform = 'translate(0px, 0px) scale(1)'
+    panCont.value.style.width  = `${natW * newInit}px`
+    panCont.value.style.height = `${natH * newInit}px`
+
+    pz = panzoom(panCont.value, { maxZoom: 5, minZoom: 0.7, bounds: true, boundsPadding: 0.1 })
+
+    const userScale = oldT.scale
+    const tx = cx - contentX * newInit * userScale
+    const ty = cy - contentY * newInit * userScale
+
+    pz.zoomAbs(0, 0, userScale)
+    pz.moveTo(tx, ty)
   }
 
   function startResize(dir) {
@@ -264,7 +689,9 @@
     resizeDir = dir
     resizeStart.rect = panCont.value.getBoundingClientRect()
 
-    if (pz) pz.pause()
+    if (pz) {
+      pz.pause()
+    }
 
     const currentZoom = pz ? pz.getTransform().scale : 1
     resizeStart.scale = initialScale.value * currentZoom
@@ -286,7 +713,9 @@
   }
 
   function onResize(e) {
-    if (!resizing) return
+    if (!resizing) {
+      return
+    }
 
     const { left, top } = resizeStart.rect
     const scale = resizeStart.scale
@@ -335,8 +764,11 @@
   }
 
   async function cropToOverlay() {
+    pushHistory()
     if (isPdf.value) {
-      if (overlayW.value < 1 || overlayH.value < 1) return
+      if (overlayW.value < 1 || overlayH.value < 1) {
+        return
+      }
 
       const { x, y, width, height } = overlayBoxPdfCoords()
 
@@ -403,12 +835,14 @@
   }
 
   function overlayBoxPdfCoords() {
-    const H = pdfCanvas.value.height
+    const Hpx = pdfCanvas.value.height
+    const s   = pdfRenderScale.value || 1
+
     return {
-      x: overlayX.value,
-      y: H - overlayY.value - overlayH.value,
-      width: overlayW.value,
-      height: overlayH.value,
+      x:      overlayX.value / s,
+      y:     (Hpx - overlayY.value - overlayH.value) / s,
+      width:  overlayW.value / s,
+      height: overlayH.value / s,
     }
   }
 
@@ -417,14 +851,12 @@
       const srcDoc = await PDFDocument.load(pdfBytes())
       const outDoc = await PDFDocument.create()
 
-      const fullW = pdfCanvas.value.width
-      const fullH = pdfCanvas.value.height
-
-      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-      const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: fullW, height: fullH }
-
       const pages   = srcDoc.getPages()
       const srcPage = pages[currentPage.value - 1]
+      const { width: pageW, height: pageH } = srcPage.getSize()
+
+      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+      const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
 
       const embedded = await outDoc.embedPage(srcPage, {
         left: x,
@@ -455,6 +887,7 @@
   function hexToRgb(hex) {
     let c = (hex || '').replace('#','').trim()
     if (c.length === 3) c = c.split('').map(ch => ch + ch).join('')
+
     return {
       r: parseInt(c.slice(0,2),16) || 0,
       g: parseInt(c.slice(2,4),16) || 0,
@@ -466,7 +899,10 @@
     const b64 = dataURL.split(',')[1]
     const bin = atob(b64)
     const u8  = new Uint8Array(bin.length)
-    for (let i=0;i<bin.length;i++) u8[i] = bin.charCodeAt(i)
+
+    for (let i=0;i<bin.length;i++) {
+      u8[i] = bin.charCodeAt(i)
+    }
     return u8
   }
 
@@ -544,38 +980,54 @@
   }
 
   async function setBackgroundColor(hexColor) {
+    pushHistory()
+    endPreviewBackgroundColor()
+
     if (isPdf.value) {
-      suppressGalleryOnce.value = true 
-      const pdf = await getDocument({ data: pdfBytes() }).promise
+      suppressGalleryOnce.value = true
+      const pdf    = await getDocument({ data: pdfBytes() }).promise
       const outDoc = await PDFDocument.create()
-      const bg = origBg.value
+      const bg     = origBg.value
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p)
-        const viewport = page.getViewport({ scale: 1 })
+
+        const vp1 = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const scale = Math.min(dpiScale, maxScaleByPixels)
+        const vp  = page.getViewport({ scale })
+
         const off = document.createElement('canvas')
-        off.width = Math.round(viewport.width)
-        off.height = Math.round(viewport.height)
-        await page.render({ canvasContext: off.getContext('2d'), viewport }).promise
+        off.width = Math.round(vp.width)
+        off.height = Math.round(vp.height)
+
+        await page.render({
+          canvasContext: off.getContext('2d', { willReadFrequently: true }),
+          viewport: vp
+        }).promise
 
         const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, bg)
         const pngBytes = dataURLtoU8(dataUrl)
         const pngImg = await outDoc.embedPng(pngBytes)
-        const w = viewport.width, h = viewport.height
-        const outPage = outDoc.addPage([w, h])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: w, height: h })
+
+        const wPt = vp1.width
+        const hPt = vp1.height
+        const outPage = outDoc.addPage([wPt, hPt])
+        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
       }
 
       const newBytes = await outDoc.save()
       originalPdf.value = newBytes
       preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
-      originalLastModified.value = Date.now() 
-        emit('update:preview', preview.value)
-        emit('update:bgcolor', hexColor)
-        await renderPdfPage()
-        origBg.value = hexToRgb(hexColor)
-        return
+      originalLastModified.value = Date.now()
+
+      emit('update:preview', preview.value)
+      emit('update:bgcolor', hexColor)
+      await renderPdfPage()
+      origBg.value = hexToRgb(hexColor)
+      return
     }
 
     const img = imgEl.value; if (!img) return
@@ -591,6 +1043,91 @@
     origBg.value = hexToRgb(hexColor)
   }
 
+  function deblendToTransparent(canvas, bgRGB) {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    const { width, height } = canvas
+    const imageData = context.getImageData(0, 0, width, height)
+    const data = imageData.data
+
+    const srgbToLinear = v => {
+      v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    }
+    const linearToSrgb = v => {
+      v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055
+      return Math.max(0, Math.min(255, Math.round(v * 255)))
+    }
+
+    const br = srgbToLinear(bgRGB.r)
+    const bg = srgbToLinear(bgRGB.g)
+    const bb = srgbToLinear(bgRGB.b)
+    const tol = 0.08
+
+    for (let i = 0; i < data.length; i += 4) {
+      const rL = srgbToLinear(data[i])
+      const gL = srgbToLinear(data[i+1])
+      const bL = srgbToLinear(data[i+2])
+
+      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : (rL >= br ? (rL - br) / (1 - br) : (br - rL) / br)
+      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : (gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg)
+      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : (bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb)
+      let a = Math.max(aR, aG, aB)
+      if (tol > 0) a = Math.max(0, Math.min(1, (a - tol) / (1 - tol)))
+
+      let fr = 0, fg = 0, fb = 0
+      if (a > 1e-5) {
+        fr = (rL - (1 - a) * br) / a
+        fg = (gL - (1 - a) * bg) / a
+        fb = (bL - (1 - a) * bb) / a
+      }
+
+      data[i]   = linearToSrgb(fr)
+      data[i+1] = linearToSrgb(fg)
+      data[i+2] = linearToSrgb(fb)
+      data[i+3] = Math.round(a * 255)
+    }
+
+    context.putImageData(imageData, 0, 0)
+    return canvas.toDataURL('image/png')
+  }
+
+  function previewBackgroundColor(hexColor) {
+    const src = getSourceCanvas()
+    if (!src || !previewImg.value) return
+
+    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
+
+    if (matteKey !== key || !matteDataURL) {
+      const MAX_PREV_PX = 2e6
+      const scale = Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
+      const w = Math.max(1, Math.round(src.width * scale))
+      const h = Math.max(1, Math.round(src.height * scale))
+
+      const off = document.createElement('canvas')
+      off.width = w
+      off.height = h
+      off.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h)
+
+      matteDataURL = deblendToTransparent(off, origBg.value)
+      matteKey = key
+    }
+
+    previewImg.value.src = matteDataURL
+    previewImg.value.style.backgroundColor = hexColor
+    previewType.value = 'bgcolor'
+    previewOn.value = true
+  }
+
+  function endPreviewBackgroundColor() {
+    if (previewImg.value) {
+      previewImg.value.src = ''
+      previewImg.value.style.backgroundColor = ''
+    }
+    if (previewType.value === 'bgcolor') {
+      previewOn.value = false
+      previewType.value = null
+    }
+  }
+
   function rgbToHex({ r, g, b }) {
     const to2 = v => v.toString(16).padStart(2,'0')
     return '#' + to2(r) + to2(g) + to2(b)
@@ -598,6 +1135,7 @@
 
   function detectBackground () {
     let src
+
     if (isPdf.value && pdfCanvas.value) {
       src = pdfCanvas.value
     }else if (imgEl.value?.naturalWidth) {
@@ -711,6 +1249,7 @@
 
   const overlayStyle = computed(() => {
     const s = initialScale.value || 1
+
     return {
       position: 'absolute',
       left: `${overlayX.value * s}px`,
@@ -725,24 +1264,28 @@
   })
 
   function previewCropToContent () {
-    const isPdfMode = isPdf.value
+    const sourceCanvas = getSourceCanvas()
+    if (!sourceCanvas) {
+      return
+    }
 
-    const sourceCanvas = isPdfMode ? pdfCanvas.value : (() => {
-      const imageElement = imgEl.value
-      if (!imageElement) return null
+    const W = sourceCanvas.width
+    const H = sourceCanvas.height
 
-      const offscreenCanvas = document.createElement('canvas')
-      offscreenCanvas.width = imageElement.naturalWidth
-      offscreenCanvas.height = imageElement.naturalHeight
-      offscreenCanvas.getContext('2d').drawImage(imageElement, 0, 0)
-      return offscreenCanvas
-    })()
+    let roiX = 0, roiY = 0, roiW = W, roiH = H
+    if (overlayW.value > 0 && overlayH.value > 0) {
+      roiX = Math.max(0, Math.min(overlayX.value, W - 1))
+      roiY = Math.max(0, Math.min(overlayY.value, H - 1))
+      roiW = Math.max(1, Math.min(overlayW.value,  W - roiX))
+      roiH = Math.max(1, Math.min(overlayH.value, H - roiY))
+    }
 
-    if (!sourceCanvas) return
+    const roi = document.createElement('canvas')
+    roi.width = roiW; roi.height = roiH
+    roi.getContext('2d', { willReadFrequently: true }).drawImage(sourceCanvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH)
 
-    const width = sourceCanvas.width
-    const height = sourceCanvas.height
-    const context = sourceCanvas.getContext('2d', { willReadFrequently: true })
+    const width = roiW, height = roiH
+    const context = roi.getContext('2d', { willReadFrequently: true })
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
@@ -751,145 +1294,135 @@
       const dr = r1 - r2, dg = g1 - g2, db = b1 - b2
       return dr * dr + dg * dg + db * db
     }
-
-    const averagePatch = (centerX, centerY, radius = 1) => {
-      let sumR = 0, sumG = 0, sumB = 0, count = 0
-
-      for (let dy = -radius; dy <= radius; dy++) {
-        for (let dx = -radius; dx <= radius; dx++) {
-          const x = Math.min(width - 1, Math.max(0, centerX + dx))
-          const y = Math.min(height - 1, Math.max(0, centerY + dy))
-          const i = indexOf(x, y)
-          sumR += data[i]
-          sumG += data[i + 1]
-          sumB += data[i + 2]
-          count++
+    const averagePatch = (cx, cy, r = 1) => {
+      let R=0,G=0,B=0,c=0
+      for (let dy=-r; dy<=r; dy++){
+        for (let dx=-r; dx<=r; dx++){
+          const x = Math.min(width-1, Math.max(0, cx+dx))
+          const y = Math.min(height-1, Math.max(0, cy+dy))
+          const i = indexOf(x,y)
+          R+=data[i]; G+=data[i+1]; B+=data[i+2]; c++
         }
       }
-      return [sumR / count, sumG / count, sumB / count]
+      return [R/c, G/c, B/c]
     }
 
-    const corner1 = averagePatch(0, 0)
-    const corner2 = averagePatch(width - 1, 0)
-    const corner3 = averagePatch(0, height - 1)
-    const corner4 = averagePatch(width - 1, height - 1)
+    const c1 = averagePatch(0, 0)
+    const c2 = averagePatch(width-1, 0)
+    const c3 = averagePatch(0, height-1)
+    const c4 = averagePatch(width-1, height-1)
+    const bg = [(c1[0]+c2[0]+c3[0]+c4[0])/4, (c1[1]+c2[1]+c3[1]+c4[1])/4, (c1[2]+c2[2]+c3[2]+c4[2])/4]
 
-    const background = [
-      (corner1[0] + corner2[0] + corner3[0] + corner4[0]) / 4,
-      (corner1[1] + corner2[1] + corner3[1] + corner4[1]) / 4,
-      (corner1[2] + corner2[2] + corner3[2] + corner4[2]) / 4,
-    ]
-
-    const baseThreshold = isPdfMode ? 14 : 10
-    const cornerDeviationSquared = (
-      squaredDistance(...corner1, ...background) +
-      squaredDistance(...corner2, ...background) +
-      squaredDistance(...corner3, ...background) +
-      squaredDistance(...corner4, ...background)
-    ) / 4
-
-    const toleranceSquared = Math.max(baseThreshold * baseThreshold, cornerDeviationSquared * 4 + 16)
+    const baseThreshold = isPdf.value ? 14 : 10
+    const devSq = (squaredDistance(...c1, ...bg) + squaredDistance(...c2, ...bg) + squaredDistance(...c3, ...bg) + squaredDistance(...c4, ...bg)) / 4
+    const tolSq = Math.max(baseThreshold*baseThreshold, devSq*4 + 16)
     const alphaMin = 10
 
-    const visitedBackground = new Uint8Array(width * height)
-    const queue = []
+    const visited = new Uint8Array(width * height)
+    const q = []
 
-    const tryPushIfBackground = (x, y) => {
-      if (x < 0 || x >= width || y < 0 || y >= height) return
+    const tryPush = (x, y) => {
+      if (x < 0 || x >= width || y < 0 || y >= height) {
+        return
+      }
+      const id = y*width + x
 
-      const id = y * width + x
+      if (visited[id]) {
+        return
+      }
 
-      if (visitedBackground[id]) return
-
-      const i = indexOf(x, y)
-      const alpha = data[i + 3]
-      const isBackground = (alpha <= alphaMin) ||
-        (squaredDistance(data[i], data[i + 1], data[i + 2], background[0], background[1], background[2]) <= toleranceSquared)
-
-      if (isBackground) {
-        visitedBackground[id] = 1
-        queue.push(id)
+      const i = indexOf(x,y)
+      const a = data[i+3]
+      const isBg = (a <= alphaMin) || (squaredDistance(data[i],data[i+1],data[i+2], bg[0],bg[1],bg[2]) <= tolSq)
+      if (isBg) {
+        visited[id]=1; q.push(id)
       }
     }
 
-    tryPushIfBackground(0, 0)
-    tryPushIfBackground(width - 1, 0)
-    tryPushIfBackground(0, height - 1)
-    tryPushIfBackground(width - 1, height - 1)
-
-    while (queue.length) {
-      const id = queue.pop()
-      const x = id % width
-      const y = (id / width) | 0
-      tryPushIfBackground(x + 1, y)
-      tryPushIfBackground(x - 1, y)
-      tryPushIfBackground(x, y + 1)
-      tryPushIfBackground(x, y - 1)
+    tryPush(0,0); tryPush(width-1,0); tryPush(0,height-1); tryPush(width-1,height-1)
+    while (q.length){
+      const id = q.pop()
+      const x = id % width, y = (id/width)|0
+      tryPush(x+1,y); tryPush(x-1,y); tryPush(x,y+1); tryPush(x,y-1)
     }
 
     let left = width, top = height, right = -1, bottom = -1
+    for (let y=0; y<height; y++){
+      for (let x=0; x<width; x++){
+        const id = y*width + x
+        if (visited[id]) {
+          continue
+        }
 
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const id = y * width + x
-        if (visitedBackground[id]) continue
+        const i = indexOf(x,y)
+        const a = data[i+3]
 
-        const i = indexOf(x, y)
-        const alpha = data[i + 3]
-
-        if (
-          alpha > alphaMin &&
-          squaredDistance(data[i], data[i + 1], data[i + 2], background[0], background[1], background[2]) > toleranceSquared
-        ) {
-          if (x < left) left = x
-          if (x > right) right = x
-          if (y < top) top = y
-          if (y > bottom) bottom = y
+        if (a > alphaMin && squaredDistance(data[i],data[i+1],data[i+2], bg[0],bg[1],bg[2]) > tolSq){
+          if (x < left) {
+            left = x
+          }
+          if (x > right) {
+            right = x
+          }
+          if (y < top) {
+            top = y
+          }
+          if (y > bottom) {
+            bottom = y
+          }
         }
       }
     }
-
-    if (right < left || bottom < top) return
-
-    const columnAllBackground = (columnX) => {
-      for (let rowY = top; rowY <= bottom; rowY++) {
-        const id = rowY * width + columnX
-        if (!visitedBackground[id]) return false
-      }
-      return true
-    }
-
-    const rowAllBackground = (rowY) => {
-      for (let columnX = left; columnX <= right; columnX++) {
-        const id = rowY * width + columnX
-        if (!visitedBackground[id]) return false
-      }
-      return true
-    }
-
-    while (left < right && columnAllBackground(left)) left++
-    while (left < right && columnAllBackground(right)) right--
-    while (top < bottom && rowAllBackground(top)) top++
-    while (top < bottom && rowAllBackground(bottom)) bottom--
-
-    const newWidth = right - left + 1
-    const newHeight = bottom - top + 1
-
-    if (
-      overlayX.value === left &&
-      overlayY.value === top &&
-      overlayW.value === newWidth &&
-      overlayH.value === newHeight
-    ) {
+    if (right < left || bottom < top) {
       return
     }
 
-    showOverlay(newWidth, newHeight, left, top)
+    const colAllBg = (x) => { 
+      for (let y=top; y<=bottom; y++) {
+        if (!visited[y*width+x]) {
+          return false; 
+        }
+      } return true 
+    }
+
+    const rowAllBg = (y) => { 
+      for (let x=left; x<=right; x++) {
+        if (!visited[y*width+x]) {
+          return false;
+        }
+        return true
+      }
+    }
+
+    while (left < right  && colAllBg(left)) {
+      left++
+    }
+    while (left < right  && colAllBg(right)) {
+      right--
+    }
+    while (top  < bottom && rowAllBg(top)) {
+      top++
+    }
+    while (top  < bottom && rowAllBg(bottom)) {
+      bottom--
+    }
+
+    const newW = right - left + 1
+    const newH = bottom - top + 1
+
+    const newX = roiX + left
+    const newY = roiY + top
+
+    showOverlay(newW, newH, newX, newY)
   }
 
   function fixJpegArtifacts() {
+    pushHistory()
     const img = imgEl.value;
-    if (!img?.naturalWidth) return;
+    if (!img?.naturalWidth) {
+      return;
+    }
+
     const W = img.naturalWidth, H = img.naturalHeight;
 
     const off = document.createElement('canvas');
@@ -926,10 +1459,11 @@
             const db = s0[ii+2] - b0;
             const wR = Math.exp(-(dr*dr+dg*dg+db*db)/twoσr2);
             const w  = wS * wR;
+
             wsum += w;
-            sr   += s0[ii]   * w;
-            sg   += s0[ii+1] * w;
-            sb   += s0[ii+2] * w;
+            sr += s0[ii] * w;
+            sg += s0[ii+1] * w;
+            sb += s0[ii+2] * w;
           }
         }
 
@@ -1024,10 +1558,14 @@
   }
 
   function getSourceCanvas () {
-    if (isPdf.value && pdfCanvas.value?.width) return pdfCanvas.value
+    if (isPdf.value && pdfCanvas.value?.width) {
+      return pdfCanvas.value
+    }
     const img = imgEl.value
 
-    if (!img?.naturalWidth) return null
+    if (!img?.naturalWidth) {
+      return null
+    }
     const off = document.createElement('canvas')
 
     off.width = img.naturalWidth
@@ -1063,9 +1601,14 @@
 
           for (let dx=-1;dx<=1;dx++){
             const xx = Math.min(W-1, Math.max(0, x+dx))
-            if (mask[yy*W+xx]) { on=1; break }
+            if (mask[yy*W+xx]) { 
+              on=1;
+              break 
+            }
           }
-          if (on) break
+          if (on) {
+            break
+          }
         }
         out[y*W+x]=on
       }
@@ -1108,7 +1651,10 @@
 
     for (let y = 0; y < H; y++){
       for (let x = 0 ; x < W ; x++){
-        if (y>=r && y<H-r && x>=r && x<W-r) continue
+        if (y>=r && y<H-r && x>=r && x<W-r) {
+          continue
+        }
+
         const i = (y*W + x)*4
         out[i]=S[i]; out[i+1]=S[i+1]; out[i+2]=S[i+2]; out[i+3]=S[i+3]
       }
@@ -1117,14 +1663,21 @@
   }
 
   function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
-    if (highlightOn.value) { clearHighlights(); return }
+    if (highlightOn.value) {
+      clearHighlights(); return
+    }
 
     const { diffThresh = 12, lowEdge = 40, highEdge = 150, dilate = 1} = opts
 
     const src = getSourceCanvas(), mc = markCanvas.value
-    if (!src || !mc) return
+    if (!src || !mc) {
+      return
+    }
+
     const W = src.width, H = src.height
-    if (mc.width !== W || mc.height !== H) { mc.width = W; mc.height = H }
+    if (mc.width !== W || mc.height !== H) {
+      mc.width = W; mc.height = H
+    }
 
     const sctx = src.getContext('2d', { willReadFrequently: true })
     const srcIm = sctx.getImageData(0,0,W,H)
@@ -1137,30 +1690,44 @@
 
     const near = new Uint8Array(W*H)
     const core = new Uint8Array(W*H)
-    for (let i=0;i<near.length;i++){ if (G[i] > lowEdge) near[i]=1; if (G[i] > highEdge) core[i]=1 }
+    for (let i=0;i<near.length;i++) {
+      if (G[i] > lowEdge) {
+        near[i]=1
+      } 
+      if (G[i] > highEdge) {
+        core[i]=1 
+      }
+    }
 
     let nearDil = near
-    for (let k=0;k<dilate;k++) nearDil = dilate1px(nearDil, W, H)
+    for (let k=0;k<dilate;k++) {
+      nearDil = dilate1px(nearDil, W, H)
+    }
 
     const mask = new Uint8Array(W*H)
     for (let i=0,j=0;i<S.length;i+=4,j++){
       const d = (Math.abs(S[i]-B[i]) + Math.abs(S[i+1]-B[i+1]) + Math.abs(S[i+2]-B[i+2])) / 3
-      if (d > diffThresh && nearDil[j] && !core[j]) mask[j] = 1
+      if (d > diffThresh && nearDil[j] && !core[j]) {
+        mask[j] = 1
+      }
     }
 
     const cr = parseInt(color.slice(1,3),16)
     const cg = parseInt(color.slice(3,5),16)
     const cb = parseInt(color.slice(5,7),16)
-    const A  = 200
+    const A = 200
 
     const octx = mc.getContext('2d')
-    const oIm  = octx.createImageData(W,H)
+    const oIm = octx.createImageData(W,H)
     const O = oIm.data
 
     for (let y=0;y<H;y++){
       for (let x=0;x<W;x++){
         const id = y*W + x
-        if (!mask[id]) continue
+        if (!mask[id]) {
+          continue
+        }
+
         const k = id*4
         O[k]=cr; O[k+1]=cg; O[k+2]=cb; O[k+3]=A
       }
@@ -1176,7 +1743,9 @@
     const d = im.data
 
     let wr = 0.299, wg = 0.587, wb = 0.114
-    if (mode === 'bt709') { wr = 0.2126; wg = 0.7152; wb = 0.0722 }
+    if (mode === 'bt709') {
+      wr = 0.2126; wg = 0.7152; wb = 0.0722
+    }
 
     const s = Math.max(0, Math.min(1, strength))
     for (let i = 0; i < d.length; i += 4) {
@@ -1189,6 +1758,9 @@
   }
 
   async function applyGrayscale({ mode = 'bt601', strength = 1 } = {}) {
+    pushHistory()
+    endPreviewGrayscale()
+
     if (isPdf.value) {
       suppressGalleryOnce.value = true
       const pdf = await getDocument({ data: pdfBytes() }).promise
@@ -1196,21 +1768,30 @@
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p)
-        const viewport = page.getViewport({ scale: 1 })
+
+        const vp1 = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const scale = Math.min(dpiScale, maxScaleByPixels)
+        const vp = page.getViewport({ scale })
 
         const off = document.createElement('canvas')
-        off.width = Math.round(viewport.width)
-        off.height = Math.round(viewport.height)
+        off.width = Math.round(vp.width)
+        off.height = Math.round(vp.height)
 
-        await page.render({ canvasContext: off.getContext('2d'), viewport }).promise
+        await page.render({
+          canvasContext: off.getContext('2d', { willReadFrequently: true }),
+          viewport: vp
+        }).promise
 
         grayscaleCanvas(off, strength, mode)
 
         const pngBytes = dataURLtoU8(off.toDataURL('image/png'))
         const pngImg = await out.embedPng(pngBytes)
-        const w = viewport.width, h = viewport.height
-        const outPage = out.addPage([w, h])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: w, height: h })
+        const wPt = vp1.width
+        const hPt = vp1.height
+        const outPage = outDoc.addPage([wPt, hPt])
+        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
       }
 
       const newBytes = await out.save()
@@ -1225,7 +1806,9 @@
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) return
+    if (!img?.naturalWidth) {
+      return
+    }
 
     const c = document.createElement('canvas')
     c.width = img.naturalWidth
@@ -1247,7 +1830,63 @@
     })
   }
 
+  function clearAllPreviews () {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+
+    if (node) {
+      node.style.filter = ''
+    }
+    if (previewImg.value) {
+      previewImg.value.src = ''
+    }
+    previewOn.value = false
+    previewType.value = null
+  }
+
+  function previewGrayscale({ strength = 1 } = {}) {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (!node) {
+      return
+    }
+
+    const s = Math.max(0, Math.min(1, strength))
+    node.style.filter = `grayscale(${s})`
+    previewType.value = 'grayscale'
+    previewOn.value = true
+  }
+
+  function endPreviewGrayscale() {
+    const node = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (node) {
+      node.style.filter = ''
+    }
+
+    if (previewType.value === 'grayscale') {
+      previewOn.value = false
+      previewType.value = null
+    }
+  }
+
+  function undo() {
+    const snap = history.pop()
+    if (!snap) {
+      return
+    }
+
+    restoreSnapshot(snap)
+  }
+
+  function resetToOriginal() {
+    if (!origSnapshot.value) {
+      return
+    }
+
+    history.length = 0
+    restoreSnapshot(origSnapshot.value)
+  }
+
   function clear() {
+    clearAllPreviews()
     preview.value = null
     isPdf.value = false
     overlayX.value = 0
@@ -1258,7 +1897,10 @@
     totalPages.value = 1
     suppressGalleryOnce.value = false
 
-    if (pz) { pz.dispose(); pz = null }
+    if (pz) {
+      pz.dispose()
+      pz = null
+    }
 
     panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'' })
     initialScale.value = 1
@@ -1281,6 +1923,15 @@
     highlightJpegArtifacts,
     applyGrayscale,
     setPdfPage,
+    previewGrayscale,
+    endPreviewGrayscale,
+    previewBackgroundColor,
+    endPreviewBackgroundColor,
+    exportFile,
+    estimateExport,
+    undo,
+    resetToOriginal,
+    loadExternalFile,
   })
 </script>
 
@@ -1288,7 +1939,6 @@
   .dropField {
     width: 100%;
     height: 100vh;
-    border: 2px dashed #ccc;
     background: #fff;
     display: flex;
     align-items: center;
@@ -1301,7 +1951,8 @@
 
   .preview-container {
     position: relative;
-    width:100%; height:100%;
+    width:100%;
+    height:100%;
     background: #fff;
     display: flex;
     align-items: center;
@@ -1320,6 +1971,17 @@
     width: 100%; height: 100%;
     object-fit: contain;
     user-select: none;
+  }
+
+  .preview-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    z-index: 3;
   }
 
   .mark-canvas { 
@@ -1345,7 +2007,8 @@
 
   .crop-overlay .handle {
     position: absolute;
-    width: 10px; height: 10px;       
+    width: 10px;
+    height: 10px;       
     background: #fff;
     border: 1px solid #ff3b30;
     box-sizing: border-box;
@@ -1353,12 +2016,55 @@
     touch-action: none;
   }
 
-  .crop-overlay .nw{top: -5px; left: -5px; cursor: nw-resize}
-  .crop-overlay .n {top: -5px; left:50%; transform: translateX(-50%); cursor: n-resize}
-  .crop-overlay .ne{top: -5px; right: -5px; cursor: ne-resize}
-  .crop-overlay .e {top: 50%; right: -5px; transform: translateY(-50%); cursor: e-resize}
-  .crop-overlay .se{bottom: -5px; right: -5px; cursor: se-resize}
-  .crop-overlay .s {bottom: -5px; left: 50%; transform: translateX(-50%); cursor: s-resize}
-  .crop-overlay .sw{bottom: -5px; left: -5px; cursor: sw-resize}
-  .crop-overlay .w {top: 50%; left: -5px; transform: translateY(-50%); cursor: w-resize}
+  .crop-overlay .nw {
+    top: -5px;
+    left: -5px;
+    cursor: nw-resize
+  }
+
+  .crop-overlay .n {
+    top: -5px;
+    left:50%;
+    transform: translateX(-50%);
+    cursor: n-resize
+  }
+
+  .crop-overlay .ne {
+    top: -5px;
+    right: -5px;
+    cursor: ne-resize
+  }
+
+  .crop-overlay .e {
+    top: 50%;
+    right: -5px;
+    transform: translateY(-50%);
+    cursor: e-resize
+  }
+
+  .crop-overlay .se {
+    bottom: -5px;
+    right: -5px;
+    cursor: se-resize
+  }
+
+  .crop-overlay .s {
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    cursor: s-resize
+  }
+
+  .crop-overlay .sw {
+    bottom: -5px;
+    left: -5px;
+    cursor: sw-resize
+  }
+
+  .crop-overlay .w {
+    top: 50%;
+    left: -5px;
+    transform: translateY(-50%);
+    cursor: w-resize
+  }
 </style>

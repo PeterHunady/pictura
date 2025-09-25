@@ -46,6 +46,7 @@
         modelValue: { type: Number, default: 1 },
         thumbWidth: { type: Number, default: 160 }
     })
+
     const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
 
     const localSel = ref(props.modelValue || 1)
@@ -84,7 +85,9 @@
     watch(() => props.pages, renderThumbs)
 
     function confirm () {
-        if (!localSel.value) return
+        if (!localSel.value) {
+            return
+        }
         emit('confirm', localSel.value)
     }
 </script>
