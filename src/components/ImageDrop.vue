@@ -410,7 +410,7 @@
   function hasAlphaImage(imageEl) {
     const w = imageEl.naturalWidth, h = imageEl.naturalHeight
     if (!w || !h) return false
-    
+
     const c = document.createElement('canvas')
     c.width = w; c.height = h
     const ctx = c.getContext('2d', { willReadFrequently: true })
@@ -491,8 +491,8 @@
       name:  originalFileName.value,
       type:  'application/pdf',
       size:  originalFileSize.value,
-      width: viewport.width,
-      height: viewport.height,
+      width: viewport.width.toFixed(),
+      height: viewport.height.toFixed(),
       pages: totalPages.value,
       page:  currentPage.value,
       lastModified: originalLastModified.value,
