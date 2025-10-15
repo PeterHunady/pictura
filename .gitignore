@@ -15,7 +15,6 @@ dist-ssr
 coverage
 *.local
 
-src/analytics.js
 src/server.py
 
 /cypress/videos/
