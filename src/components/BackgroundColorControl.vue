@@ -12,8 +12,9 @@
         <input
           id="bg-color-input"
           type="text"
-          v-model="color"
-          placeholder="#ffffff"
+          :value="bgTransparent ? 'transparent' : color"
+          @input="onColorInput"
+          :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
         />
 
         <div
@@ -30,9 +31,19 @@
         />
       </div>
 
-      <button class="apply-btn" @click="applyColor">
-        Apply
-      </button>
+      <div class="btn-row">
+        <button class="apply-btn" @click="applyColor">
+          Apply
+        </button>
+
+        <button 
+          class="remove-btn"
+          @click="removeBackground"
+          :disabled="bgTransparent"
+        >
+          Remove Background
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -41,14 +52,22 @@
   import { ref, onMounted, watch, computed, onBeforeUnmount } from 'vue'
 
   const props = defineProps({
-    initialColor: { type: String, default: '#ffffff' }
+    initialColor: { type: String, default: '#ffffff' },
+    bgTransparent: { type: Boolean, default: false }
   })
 
-  const emit = defineEmits(['apply-color', 'preview-color', 'end-preview-color'])
+  const emit = defineEmits(['apply-color', 'preview-color', 'end-preview-color', 'remove-background'])
+
   const collapsed = ref(true)
   const color = ref(props.initialColor)
   const picker = ref(null)
   const normalizedColor = computed(() => normalizeHex(color.value))
+
+  function onColorInput(e) {
+    if (!props.bgTransparent) {
+      color.value = e.target.value
+    }
+  }
 
   function openPicker() {
     if (picker.value) {
@@ -75,6 +94,10 @@
 
   function applyColor() {
     emit('apply-color', normalizedColor.value ?? '#ffffff')
+  }
+
+  function removeBackground() {
+    emit('remove-background')
   }
 
   let previewTimer = null
@@ -105,6 +128,10 @@
   
   watch(() => props.initialColor, (v) => {
     color.value = v
+  })
+
+  watch(() => props.bgTransparent, (v) => {
+    if (v) color.value = ''
   })
 
   onBeforeUnmount(() => {
@@ -199,5 +226,20 @@
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
     border-top: 8px solid #333;
+  }
+
+  .btn-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .remove-btn {
+    padding: 0.6rem 1rem;
+    border: none;
+    background: #e53935;
+    color: white;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
   }
 </style>

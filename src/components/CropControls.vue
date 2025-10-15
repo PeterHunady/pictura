@@ -1,7 +1,7 @@
 <template>
   <div class="resize">
     <button class="resize-toggle" @click="collapsed = !collapsed">
-      <span>Resize Image</span>
+      <span>Crop Image</span>
       <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
     </button>
 
@@ -10,25 +10,11 @@
         <div class="input-row">
 
           <div class="input-group">
-            <label for="width-input">Width</label>
-            <input
-              id="width-input"
-              type="number"
-              v-model.number="w"
-              :min="1"
-              :max="meta.width"
-            />
+            <p>Width: {{ w }}</p>
           </div>
 
           <div class="input-group">
-            <label for="height-input">Height</label>
-            <input
-              id="height-input"
-              type="number"
-              v-model.number="h"
-              :min="1"
-              :max="meta.height"
-            />
+            <p>Height: {{ h }}</p>
           </div>
         </div>
 

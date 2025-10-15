@@ -1,21 +1,31 @@
 <template>
     <div class="app-container">
         <TopBar
-            :right-gap="rightGap"
-            :top-gap="topGap"
-            :show-actions="true"
+            :show-scale="showScale"
+            :display-scale="displayScale"
+            :reference-width-mm="referenceWidthMm"
+            :min-scale="minScale"
+            :max-scale="maxScale"
+            :is-calibrated="!!calibrationBaseCssDpi"
+            @update:scale="onScaleUpdate"
+            @update:reference-width="onReferenceWidthUpdate"
+            @visible="onToggleCropVisible"
             @undo="onUndo"
             @reset="onReset"
+            @calibrate="onOpenCalibration"
+            @clear-calibration="onClearCalibration"
         />
 
         <ImageDrop
-            :right-gap="rightGap" 
+            :right-gap="rightGap"
             :top-gap="topGap"
             ref="dropRef"
             @update:preview="imagePreview = $event"
             @update:meta="onMetaUpdate"
             @update:overlay="onOverlayUpdate"
             @update:bgcolor="onBgColorUpdate"
+            @update:scale="onScaleUpdateFromDrop"
+            @update:has-alpha="isTransparent = $event"
         />
 
         <Sidebar
@@ -25,7 +35,7 @@
             :initialColor="bgColor"
             :export-bytes="exportPreviewBytes"
             :export-loading="exportLoading"
-
+            :bg-transparent="isTransparent" 
             :export-suggested-name="exportName"
             :export-suggested-type="exportType"
             :top-gap="topGap"
@@ -44,6 +54,7 @@
             @end-preview-color="onEndPreviewBgColor"
             @request-export-preview="onRequestExportPreview"
             @export="onExport"
+            @remove-background="onRemoveBackground"
         />
 
         <PageGalleryDialog
@@ -58,12 +69,13 @@
 </template>
 
 <script setup>
-    import { ref, computed, onUnmounted, onMounted, nextTick  } from 'vue'
+    import { ref, computed, onUnmounted, onMounted, nextTick } from 'vue'
     import { consumePendingFile } from '@/composables/usePendingFile'
     import ImageDrop from '@/components/ImageDrop.vue'
     import Sidebar from '@/components/Sidebar.vue'
     import PageGalleryDialog from '@/components/PageGalleryDialog.vue'
     import TopBar from '@/components/TopBar.vue'
+    import * as analytics from '@/analytics'
 
     const dropRef = ref(null)
     const imagePreview = ref(null)
@@ -71,15 +83,23 @@
     const cropWidth = ref(0)
     const cropHeight = ref(0)
     const bgColor = ref('#ffffff')
+    const isTransparent = ref(false)
     const showPageDlg = ref(false)
     const totalPages = ref(1)
     const pickPage = ref(1)
     const lastDocSig = ref(null)
 
+    const displayScale = ref(100)
+    const referenceWidthMm = ref(210)
+    const calibrationBaseCssDpi = ref(null)
+    const showScale = ref(false)
+    const minScale = ref(1)
+    const maxScale = ref(10000)
+
     const exportName = ref(null)
     const exportType = ref(null)
     const editingNow = ref(false)
-    const sourceSig = ref(null) 
+    const sourceSig = ref(null)
 
     const sidebarCollapsed = ref(false)
     const rightGap = computed(() =>
@@ -88,20 +108,47 @@
 
     const topGap = '48px'
 
+    const initialDoc = ref(null)
+    const actionsPerformed = ref([])
+
+    function recordAction(name, data) {
+        actionsPerformed.value.push({ t: name, ...(data || {}) })
+    }
+
     function onUndo() {
         dropRef.value?.undo?.()
+        recordAction('undo')
     }
-    
+
     function onReset() {
         dropRef.value?.resetToOriginal?.()
+        recordAction('reset')
+    }
+
+    function onToggleCropVisible(visible) {
+        dropRef.value?.toggleOverlayVisibility?.(visible)
+    }
+
+    async function onOpenCalibration() {
+        try {
+            const dpi = await dropRef.value?.openCalibration?.()
+            calibrationBaseCssDpi.value = dpi || 96
+            recordAction('calibration')
+        } catch (e) {
+            calibrationBaseCssDpi.value = 96
+            recordAction('calibration')
+        }
+    }
+
+    function onClearCalibration() {
+        calibrationBaseCssDpi.value = null
+        dropRef.value?.clearCalibration?.()
+        recordAction('calibration_cleared')
     }
 
     onMounted(async () => {
         const f = consumePendingFile()
-        if (!f) {
-            return
-        }
-
+        if (!f) return
         await nextTick()
         if (dropRef.value?.loadExternalFile) {
             await dropRef.value.loadExternalFile(f)
@@ -114,38 +161,34 @@
     let exportTimer = null
 
     async function onRequestExportPreview({ name, format }) {
-        if (format) {
-            lastExportFormat.value = format
-        }
+        if (format) lastExportFormat.value = format
         exportLoading.value = true
-
         try {
             const res = await dropRef.value?.estimateExport({ format: lastExportFormat.value })
             exportPreviewBytes.value = res?.sizeBytes ?? null
         } finally {
             exportLoading.value = false
+    }
+    }
+
+    async function recalcExportPreview() {
+        if (!dropRef.value) {
+            exportPreviewBytes.value = null
+            return
+        }
+        exportLoading.value = true
+
+        try {
+            const { sizeBytes } = (await dropRef.value.estimateExport({
+            format: lastExportFormat.value || 'png'
+            })) || {}
+            exportPreviewBytes.value = sizeBytes ?? null
+        } finally {
+            exportLoading.value = false
         }
     }
 
-  async function recalcExportPreview () {
-    if (!dropRef.value) {
-        exportPreviewBytes.value = null;
-        return
-    }
-    exportLoading.value = true
-
-    try {
-      const { sizeBytes } = await dropRef.value.estimateExport({
-        format: lastExportFormat.value || 'png'
-      }) || {}
-
-      exportPreviewBytes.value = sizeBytes ?? null
-    } finally {
-      exportLoading.value = false
-    }
-  }
-
-    function scheduleExportRecalc (delay = 200) {
+    function scheduleExportRecalc(delay = 200) {
         clearTimeout(exportTimer)
         exportTimer = setTimeout(recalcExportPreview, delay)
     }
@@ -154,17 +197,22 @@
 
     async function onExport({ name, format }) {
         const res = await dropRef.value?.estimateExport({ format })
-        if (!res?.blob) {
-            return
-        }
+        if (!res?.blob) return
+
+        if (!analytics.hasActive?.()) analytics.startSession()
 
         const ext = res.ext || format || 'png'
         const a = document.createElement('a')
-
         a.href = URL.createObjectURL(res.blob)
         a.download = `${(name || 'export').trim()}.${ext}`
         a.click()
         URL.revokeObjectURL(a.href)
+
+        analytics.endSession({
+            actions: actionsPerformed.value
+        })
+
+        actionsPerformed.value = []
     }
 
     function onPreviewGrayscale(opts) {
@@ -174,16 +222,30 @@
     function onEndPreviewGrayscale() {
         dropRef.value?.endPreviewGrayscale()
     }
-
+    
     function onPreviewBgColor(hex) {
         dropRef.value?.previewBackgroundColor(hex)
     }
+
     function onEndPreviewBgColor() {
         dropRef.value?.endPreviewBackgroundColor()
     }
 
+    function onRemoveBackground() {
+        editingNow.value = true
+        dropRef.value?.removeBackground?.()
+        scheduleExportRecalc(120)
+        recordAction('remove_background')
+    }
+
     function onBgColorUpdate(hex) {
-        bgColor.value = hex
+        if (hex === null) {
+            bgColor.value = '#ffffff'
+            isTransparent.value = true
+        } else {
+            bgColor.value = hex
+            isTransparent.value = false
+        }
         scheduleExportRecalc()
     }
 
@@ -191,22 +253,26 @@
         editingNow.value = true
         dropRef.value?.endPreviewGrayscale()
         dropRef.value?.applyGrayscale(opts)
+        recordAction('grayscale_apply', opts || {})
     }
 
-    function onHighlightArtifacts(color='#00E5FF') {
-        dropRef.value?.highlightJpegArtifacts(color, { diffThresh:12, lowEdge:40, highEdge:150, dilate:1 })
+    function onHighlightArtifacts(color = '#00E5FF') {
+        const params = { diffThresh: 8, lowEdge: 25, highEdge: 100, dilate: 3 }
+        dropRef.value?.highlightJpegArtifacts(color, params)
+        recordAction('highlight_artifacts', { color, ...params })
     }
 
     function onApplyBgColor(color) {
-    editingNow.value = true
-    dropRef.value?.endPreviewBackgroundColor()
-    dropRef.value?.setBackgroundColor(color)
-    scheduleExportRecalc(120)
+        editingNow.value = true
+        dropRef.value?.endPreviewBackgroundColor()
+        dropRef.value?.setBackgroundColor(color)
+        scheduleExportRecalc(120)
+        recordAction('bgcolor_apply', { color })
     }
 
     function onMetaUpdate(meta) {
         imageMeta.value = meta
-        cropWidth.value  = meta?.width  || 0
+        cropWidth.value = meta?.width || 0
         cropHeight.value = meta?.height || 0
 
         const sig = meta?.docSig || `${meta?.name}|${meta?.size}|${meta?.lastModified}`
@@ -215,16 +281,27 @@
         if (isNewDoc) {
             exportName.value = meta?.name || 'export'
             exportType.value = meta?.type || ''
+
+            initialDoc.value = {
+            name: meta?.name, type: meta?.type, size: meta?.size,
+            width: meta?.width, height: meta?.height,
+            pages: meta?.pages || 1, page: meta?.page || 1
+            }
         }
 
-        if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastDocSig.value && !meta.noGallery) {
+        if (
+            meta?.type === 'application/pdf' &&
+            (meta.pages || 1) > 1 &&
+            meta.page === 1 &&
+            meta.docSig !== lastDocSig.value &&
+            !meta.noGallery
+        ) {
             const sg = meta.docSig || `${meta.name}|${meta.size}|${meta.lastModified}`
-
             if (sg !== lastDocSig.value) {
-                lastDocSig.value = sg
-                totalPages.value = meta.pages
-                pickPage.value = meta.page || 1
-                showPageDlg.value = true
+            lastDocSig.value = sg
+            totalPages.value = meta.pages
+            pickPage.value = meta.page || 1
+            showPageDlg.value = true
             }
         }
 
@@ -234,7 +311,6 @@
 
         sourceSig.value = sig
         editingNow.value = false
-
         scheduleExportRecalc(80)
     }
 
@@ -244,8 +320,19 @@
         scheduleExportRecalc(250)
     }
 
-    function onDownload() { 
-        dropRef.value?.download() 
+    function onCropToContent() {
+        dropRef.value?.previewCropToContent()
+        recordAction('crop_to_content')
+    }
+
+    function onConfirmPage(n) {
+        dropRef.value?.setPdfPage(n)
+        showPageDlg.value = false
+        recordAction('pdf_page_selected')
+    }
+
+    function onDownload() {
+        dropRef.value?.download()
     }
 
     function onClear() {
@@ -261,33 +348,47 @@
         exportName.value = null
         exportType.value = null
         sourceSig.value = null
+        showScale.value = false
     }
 
-    function onFixArtifacts() { 
+    function onFixArtifacts() {
         editingNow.value = true
-        dropRef.value?.fixJpegArtifacts() 
+        dropRef.value?.fixJpegArtifacts()
+        recordAction('fix_jpeg_artifacts')
     }
 
-    function onCropToContent() { 
-        dropRef.value?.previewCropToContent() 
+    function onPreviewCrop(size) {
+        cropWidth.value = size.width
+        cropHeight.value = size.height
+        dropRef.value?.showOverlay(size.width, size.height)
     }
 
-    function onPreviewCrop(size) { 
-        cropWidth.value=size.width
-        cropHeight.value=size.height
-        dropRef.value?.showOverlay(size.width, size.height) 
-    }
-
-    function onApplyCrop() { 
+    function onApplyCrop() {
         editingNow.value = true
         dropRef.value?.cropToOverlay()
+        recordAction('crop_apply', { width: cropWidth.value, height: cropHeight.value })
     }
 
-    function onConfirmPage(n) {
-        dropRef.value?.setPdfPage(n)
-        showPageDlg.value = false
+    function onScaleUpdateFromDrop({ displayScale: newScale, referenceWidthMm: refWidth, minDisplayScale, maxDisplayScale }) {
+        displayScale.value = newScale
+        referenceWidthMm.value = refWidth
+
+        if (Number.isFinite(minDisplayScale) && Number.isFinite(maxDisplayScale)) {
+            minScale.value = Math.max(0.01, minDisplayScale)
+            maxScale.value = Math.max(minScale.value, maxDisplayScale)
+        }
+        if (imageMeta.value) showScale.value = true
+    }
+
+    function onScaleUpdate(newScale) {
+        dropRef.value?.setDisplayScale?.(newScale)
+    }
+
+    function onReferenceWidthUpdate(newWidthMm) {
+        dropRef.value?.setReferenceWidth?.(newWidthMm)
     }
 </script>
+
 
 <style>
     html, body, #app {

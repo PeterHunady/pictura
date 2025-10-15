@@ -4,7 +4,7 @@
       <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
     </button>
 
-    <div class="content" v-show="!collapsed">
+    <div class="content" ref="contentRef" v-show="!collapsed">
       <Metadata :meta="meta" />
 
       <FixArtifactsBtn
@@ -32,6 +32,8 @@
         @apply-color="emit('apply-color', $event)"
         @preview-color="emit('preview-color', $event)"
         @end-preview-color="emit('end-preview-color')"
+        @remove-background="$emit('remove-background')"
+        :bgTransparent="props.bgTransparent"
       />
 
       <ExportControl
@@ -53,12 +55,23 @@
         </button>
       </div>
 
+      <button
+        v-if="showScrollArrow"
+        class="scroll-arrow-btn"
+        @click="scrollAction"
+      >
+        <img
+          class="icon"
+          :src="isAtBottom ? arrowUp : arrowDown"
+          :alt="isAtBottom ? 'Up' : 'Down'"
+        />
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
-  import { ref, watch } from 'vue'
+  import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
   import Metadata from './Metadata.vue'
   import CropControls from './CropControls.vue'
   import FixArtifactsBtn from './FixArtifactsButton.vue'
@@ -66,6 +79,8 @@
   import GrayscaleControl from './GrayscaleControl.vue'
   import binIcon from '@/assets/bin.png'
   import ExportControl from './ExportControl.vue'
+  import arrowUp from '@/assets/arrowUp.png'
+  import arrowDown from '@/assets/arrowDown.png'
 
   const props = defineProps({
     modelValue: { type: Boolean, default: false },
@@ -76,7 +91,8 @@
     exportLoading: { type: Boolean, default: false },
     exportSuggestedName: { type: String, default: null },
     exportSuggestedType: { type: String, default: null },
-    topGap: { type: String, default: '0px' }
+    topGap: { type: String, default: '0px' },
+    bgTransparent: { type: Boolean, default: false }
   })
 
 
@@ -85,17 +101,72 @@
     'download','clear','crop','preview-crop','resize-crop',
     'fix-artifacts','apply-color','highlight-artifacts','apply-grayscale',
     'preview-grayscale','end-preview-grayscale',
-    'preview-color','end-preview-color', 'export', 'request-export-preview'
+    'preview-color','end-preview-color', 'export', 'request-export-preview', 'remove-background'
   ])
 
   const collapsed = ref(props.modelValue)
   watch(() => props.modelValue, v => (collapsed.value = v))
   watch(collapsed, v => emit('update:modelValue', v))
-
   watch(() => props.meta, m => { if (!m && window.innerWidth < 768) collapsed.value = true })
+
+  const contentRef = ref(null)
+  const isAtBottom = ref(false)
+  const showScrollArrow = ref(false)
+
+  const handleScroll = () => {
+    const el = contentRef.value
+    if (!el) return
+    const threshold = 10
+    const { scrollTop, scrollHeight, clientHeight } = el
+    isAtBottom.value = scrollTop + clientHeight >= scrollHeight - threshold
+    showScrollArrow.value = scrollHeight > clientHeight + 5
+  }
+
+  const scrollAction = () => {
+    const el = contentRef.value
+    if (!el) return
+    if (isAtBottom.value) {
+      el.scrollTo({ top: 0, behavior: 'smooth' })
+    } else {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    }
+  }
+
+  let resizeObserver = null
+  let mutationObserver = null
+
+  onMounted(() => {
+    const el = contentRef.value
+    if (!el) return
+
+    const update = () => nextTick(() => handleScroll())
+
+    handleScroll()
+    el.addEventListener('scroll', handleScroll)
+    window.addEventListener('resize', handleScroll)
+
+    resizeObserver = new ResizeObserver(update)
+    resizeObserver.observe(el)
+
+    mutationObserver = new MutationObserver(update)
+    mutationObserver.observe(el, { childList: true, subtree: true, attributes: true })
+
+    watch( () => props.meta,
+      () => nextTick(() => handleScroll()),
+      { deep: true }
+    )
+  })
+
+  onBeforeUnmount(() => {
+    const el = contentRef.value
+    if (el) el.removeEventListener('scroll', handleScroll)
+    window.removeEventListener('resize', handleScroll)
+  
+    if (resizeObserver) resizeObserver.disconnect()
+    if (mutationObserver) mutationObserver.disconnect()
+  })
+
 </script>
-
-
 
 <style scoped>
   .sidebar {
@@ -257,4 +328,26 @@
     border-top: 1px solid #e6e6e6;
     background: transparent;
   }
+
+  .scroll-arrow-btn {
+    position: fixed;
+    bottom: 45px;
+    align-self: flex-end;
+    right: 0px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    background: none;
+    border: none;
+    z-index: 10;
+  }
+
+  .scroll-arrow-btn .icon {
+    width: 20px;
+    height: 25px;
+  }
+
 </style>

@@ -150,13 +150,3 @@
         color: #666;
     }
 </style>
-
-
-<!-- Ok super.
-
-Ako by si postupoval pri tomto, čo mi napísal vedúci?
-
-Pro testování bych pak zvažoval vytvoření nějaké serveru a na něj používal informace o tom, jak uživatel kliká pro sběr nějaké statistiky a získání nějakého vhledu... Vůbec bych (cookies a tak) netrackoval identitu uživatele. Jen jedno sezení (od otevření obrázku do uložení obrázku) bych prostě serializoval do sekvence příkazů, které uživatel použil (možná s uložením nějakých jejich parametrů) a na konci prostě odeslal jeden JSON s takovým záznamem, co se dělo. Tyhle JSONy bych prostě skladoval na serveru. Pak bude možné udělat nějaký skript (asi v Pythonu), který je bude umět zpracovat a nakreslit nějaké statistiky, které funkce a s jakým nastavením uživatelé (a v kterém pořadí) používají.
- 
-
-Ja mám to už na githube ako stránku, ale neviem či pôjde toto, čo mi on napísal -->

@@ -2,8 +2,9 @@
   <div
     class="dropField"
     :style="{ paddingRight: rightGap,
-      marginTop: topGap,
-       height: `calc(100vh - ${topGap})`}"
+              marginTop: topGap,
+              height: `calc(100vh - ${topGap})`
+            }"
     @dragover.prevent
     @dragenter.prevent
     @drop.prevent="handleDrop"
@@ -14,7 +15,10 @@
     </p>
 
     <div v-else class="preview-container" ref="previewWrap">
-      <div ref="panCont" class="panzoom-container">
+      <div
+        ref="panCont"
+        :class="['panzoom-container', { checkerboard: checkerOn }]"
+      >
         <canvas
           v-if="isPdf"
           ref="pdfCanvas"
@@ -42,7 +46,7 @@
         <canvas ref="markCanvas" class="mark-canvas"></canvas>
 
         <div
-          v-if="overlayW && overlayH"
+          v-if="overlayW && overlayH && overlayVisible"
           class="crop-overlay"
           :style="overlayStyle"
         >
@@ -65,6 +69,28 @@
       hidden
       @change="handleFileChange"
     />
+
+    <div v-if="calOpen" class="calib-backdrop" @click.self="closeCalibration">
+      <div class="calib-modal">
+        <p>Enter the measured length in millimeters.</p>
+
+        <div class="calib-line-wrap">
+          <div ref="calLineEl" class="calib-line"></div>
+        </div>
+
+        <div class="calib-controls">
+          <label>
+            Measured length (mm):
+            <input type="number" v-model.number="calMeasuredMm" min="10" max="1000" step="0.1">
+          </label>
+          <button class="primary" @click="applyCalibration">Apply</button>
+          <button @click="closeCalibration">Cancel</button>
+        </div>
+
+        <p v-if="calError" class="calib-error">{{ calError }}</p>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -103,11 +129,18 @@
   const totalPages = ref(1)
   const suppressGalleryOnce = ref(false)
   const highlightOn = ref(false)
+  const overlayVisible = ref(true)
+
+  const displayScale = ref(100)
+  const referenceWidthMm = ref(210)
+  const basePixelWidth = ref(0)
+  const screenDPI = ref(96)
+  const updatingScaleProgrammatically = ref(false)
 
   const maxW = computed(() => isPdf.value ? (pdfCanvas.value?.width  || 1) : (imgEl.value?.naturalWidth  || 1))
   const maxH = computed(() => isPdf.value ? (pdfCanvas.value?.height || 1) : (imgEl.value?.naturalHeight || 1))
   const origBg = ref({ r: 255, g: 255, b: 255 })
-  const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor'])
+  const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor', 'update:scale', 'update:has-alpha'])
 
   const PDF_PREVIEW_DPI = 600;
   const PDF_RASTER_OPS_DPI = 600;
@@ -115,9 +148,14 @@
   const pdfRenderScale = ref(1);
   const previewWrap = ref(null)
 
-  const previewImg   = ref(null)
-  const previewOn    = ref(false)
-  const previewType  = ref(null)
+  const madeTransparentImg = ref(false)
+  const madeTransparentPdf = ref(false)
+  const checkerOn = ref(false)
+  const hasAlpha = ref(false)
+
+  const previewImg = ref(null)
+  const previewOn = ref(false)
+  const previewType = ref(null)
   let matteKey = null
   let matteDataURL = null
 
@@ -125,6 +163,20 @@
   const history = []
   const origSnapshot = ref(null)
   const MAX_HISTORY = 30
+  const PZ_MIN_ZOOM = 0.2
+  const PZ_MAX_ZOOM = 20
+
+  const minScalePct = ref(0)
+  const maxScalePct = ref(0)
+
+  const absMinScale = ref(null)
+  const absMaxScale = ref(null) 
+
+  function recomputeScaleBounds () {
+    const { minPct, maxPct } = getDisplayScaleBounds()
+    minScalePct.value = minPct
+    maxScalePct.value = maxPct
+  }
 
   const props = defineProps({
     rightGap: { type: String, default: 'min(30vw, 300px)' },
@@ -132,14 +184,10 @@
   })
 
   let ro = null
-  onMounted(() => {
-    ro = new ResizeObserver(() => adjustForContainerResize())
-    if (previewWrap.value) {
-      ro.observe(previewWrap.value)
-    }
-  })
+
   onUnmounted(() => {
     ro?.disconnect(); ro = null
+    detachCalibrationListeners()
   })
 
   watch(() => props.rightGap, async () => {
@@ -214,7 +262,14 @@
           lastModified: snap.lastModified,
         })
         setupOverlay(img.naturalWidth, img.naturalHeight)
-        detectBackground()
+        madeTransparentImg.value = false
+        const alphaNow = hasAlphaImage(img)
+        setHasAlpha(alphaNow)
+        if (!alphaNow) {
+          detectBackground()
+        } else {
+          emit('update:bgcolor', null)
+        }
         initPanzoom()
       }
       img.src = snap.dataUrl
@@ -333,12 +388,43 @@
           lastModified: file.lastModified
         })
         setupOverlay(img.naturalWidth, img.naturalHeight)
-        detectBackground()
+
+        madeTransparentImg.value = false
+        const alphaNow = hasAlphaImage(img)
+        checkerOn.value = alphaNow
+        setHasAlpha(alphaNow)
+
+        if (!alphaNow) {
+          detectBackground()
+        } else {
+          emit('update:bgcolor', null)
+        }
+
         origSnapshot.value = makeSnapshot()
         history.length = 0
       }
     }
     reader.readAsDataURL(file)
+  }
+
+  function hasAlphaImage(imageEl) {
+    const w = imageEl.naturalWidth, h = imageEl.naturalHeight
+    if (!w || !h) return false
+    
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(imageEl, 0, 0)
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 200))
+
+    for (let y = 0; y < h; y += step) {
+      const row = ctx.getImageData(0, y, w, 1).data
+      for (let x = 0; x < w; x += step) {
+        const a = row[x * 4 + 3]
+        if (a < 255) return true
+      }
+    }
+    return false
   }
 
   async function loadPdf (file) {
@@ -363,6 +449,16 @@
     history.length = 0
   }
 
+  function getDisplayScaleBounds () {
+    const natW = basePixelWidth.value || 1
+    const referenceWidthCssPx = (referenceWidthMm.value / 25.4) * screenDPI.value
+    const minAbs = (absMinScale.value ?? ((initialScale.value || 1) * PZ_MIN_ZOOM))
+    const maxAbs = (absMaxScale.value ?? ((initialScale.value || 1) * PZ_MAX_ZOOM))
+    const minPct = (natW * minAbs / referenceWidthCssPx) * 100
+    const maxPct = (natW * maxAbs / referenceWidthCssPx) * 100
+    return { minPct, maxPct }
+  }
+
   async function renderPdfPage(pageNo = currentPage.value || 1, dpi = PDF_PREVIEW_DPI) {
     await nextTick()
 
@@ -383,7 +479,11 @@
     canvas.width  = Math.round(viewport.width)
     canvas.height = Math.round(viewport.height)
 
-    await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport }).promise
+    await page.render({
+      canvasContext: canvas.getContext('2d', { alpha: true }),
+      viewport,
+      background: 'rgba(0,0,0,0)'
+    }).promise
 
     setupOverlay(viewport.width, viewport.height)
 
@@ -401,8 +501,19 @@
     })
 
     suppressGalleryOnce.value = false
-    detectBackground()
+    const alphaNow = madeTransparentPdf.value || canvasHasAlpha(canvas)
+    setHasAlpha(alphaNow)
+    checkerOn.value = !!alphaNow
+
+    if (!alphaNow) {
+      detectBackground()
+    } else {
+      emit('update:bgcolor', null)
+    }
+
     await initPanzoom()
+    recomputeScaleBounds()
+    updateDisplayScale()
   }
 
   async function setPdfPage(n) {
@@ -428,8 +539,8 @@
     const natH = isPdf.value ? elem.height : elem.naturalHeight
 
     const wrap = previewWrap.value
-    const scaleW = wrap.clientWidth / natW
-    const scaleH = wrap.clientHeight / natH
+    const scaleW = Math.floor(wrap.clientWidth) / natW
+    const scaleH = Math.floor(wrap.clientHeight) / natH
     initialScale.value = Math.min(scaleW, scaleH)
 
     if (pz) {
@@ -441,7 +552,17 @@
     panCont.value.style.width = `${natW * initialScale.value}px`
     panCont.value.style.height = `${natH * initialScale.value}px`
 
-    pz = panzoom(panCont.value, { maxZoom: 5, minZoom: 0.7, bounds: true, boundsPadding: 0.1 })
+    absMinScale.value = initialScale.value * PZ_MIN_ZOOM
+    absMaxScale.value = initialScale.value * PZ_MAX_ZOOM
+    pz = panzoom(panCont.value, {
+      minZoom: absMinScale.value / initialScale.value,
+      maxZoom: absMaxScale.value / initialScale.value,
+      bounds: false,
+      boundsPadding: 0.1
+    })
+
+    pz.on('zoom', updateDisplayScale)
+    pz.on('pan', updateDisplayScale)
 
     markCanvas.value.width = natW
     markCanvas.value.height = natH
@@ -449,7 +570,59 @@
     mctx.clearRect(0, 0, natW, natH)
     highlightOn.value = false
 
+    basePixelWidth.value = natW
+    recomputeScaleBounds()
+    updateDisplayScale()
     endPreviewBackgroundColor()
+  }
+
+  function updateDisplayScale() {
+    if (!pz || !basePixelWidth.value) return
+
+    const currentTransform = pz.getTransform()
+    const absoluteScale = initialScale.value * currentTransform.scale
+    const currentWidthCssPx = basePixelWidth.value * absoluteScale
+    const referenceWidthCssPx = (referenceWidthMm.value / 25.4) * screenDPI.value
+
+    const pct = (currentWidthCssPx / referenceWidthCssPx) * 100
+    displayScale.value = pct
+
+    emit('update:scale', {
+      displayScale: displayScale.value,
+      referenceWidthMm: referenceWidthMm.value,
+      basePixelWidth: basePixelWidth.value,
+      minDisplayScale: minScalePct.value,
+      maxDisplayScale: maxScalePct.value,
+    })
+  }
+
+  function setDisplayScale(newScale) {
+    if (!pz || !basePixelWidth.value) return
+
+    const targetPct = Math.max(minScalePct.value, Math.min(maxScalePct.value, Number(newScale) || 0))
+
+    const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value
+    const targetScreenWidthPx = (targetPct / 100) * referenceWidthPx
+
+    const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
+    let targetUserScale = targetAbsoluteScale / (initialScale.value || 1)
+
+    targetUserScale = Math.max(PZ_MIN_ZOOM, Math.min(PZ_MAX_ZOOM, targetUserScale))
+
+    const wrap = previewWrap.value
+    const wrapRect = wrap.getBoundingClientRect()
+    const cx = wrapRect.left + wrapRect.width / 2
+    const cy = wrapRect.top  + wrapRect.height / 2
+
+    pz.zoomAbs(cx, cy, targetUserScale)
+
+    nextTick(() => updateDisplayScale())
+  }
+
+  function setReferenceWidth(newWidthMm) {
+    referenceWidthMm.value = newWidthMm
+    recomputeScaleBounds()
+    updateDisplayScale()
   }
 
   function adjustForContainerResize () {
@@ -465,13 +638,19 @@
     const oldInit = initialScale.value || 1
     const oldT = pz ? pz.getTransform() : { x: 0, y: 0, scale: 1 }
 
-    const cx = wrap.clientWidth  / 2
-    const cy = wrap.clientHeight / 2
-
-    const contentX = (cx - oldT.x) / (oldInit * oldT.scale)
-    const contentY = (cy - oldT.y) / (oldInit * oldT.scale)
-
     const newInit = Math.min(wrap.clientWidth / natW, wrap.clientHeight / natH) || 1
+
+    if (Math.abs(newInit - oldInit) < 0.0001) {
+      return
+    }
+
+    const oldCx = wrap.clientWidth  / 2
+    const oldCy = wrap.clientHeight / 2
+
+    const oldAbsoluteScale = oldInit * oldT.scale
+    const contentX = (oldCx - oldT.x) / oldAbsoluteScale
+    const contentY = (oldCy - oldT.y) / oldAbsoluteScale
+
     initialScale.value = newInit
 
     if (pz) {
@@ -482,14 +661,29 @@
     panCont.value.style.width  = `${natW * newInit}px`
     panCont.value.style.height = `${natH * newInit}px`
 
-    pz = panzoom(panCont.value, { maxZoom: 5, minZoom: 0.7, bounds: true, boundsPadding: 0.1 })
+    absMinScale.value = newInit * PZ_MIN_ZOOM
+    absMaxScale.value = newInit * PZ_MAX_ZOOM
 
-    const userScale = oldT.scale
-    const tx = cx - contentX * newInit * userScale
-    const ty = cy - contentY * newInit * userScale
+    pz = panzoom(panCont.value, {
+      minZoom: PZ_MIN_ZOOM,
+      maxZoom: PZ_MAX_ZOOM,
+      bounds: false,
+      boundsPadding: 0.1,
+    })
 
-    pz.zoomAbs(0, 0, userScale)
+    pz.on('zoom', updateDisplayScale)
+    pz.on('pan', updateDisplayScale)
+
+    const newUserScale = oldAbsoluteScale / newInit
+    const newCx = wrap.clientWidth  / 2
+    const newCy = wrap.clientHeight / 2
+    const tx = newCx - contentX * newInit * newUserScale
+    const ty = newCy - contentY * newInit * newUserScale
+
+    pz.zoomAbs(0, 0, newUserScale)
     pz.moveTo(tx, ty)
+    recomputeScaleBounds()
+    updateDisplayScale()
   }
 
   function startResize(dir) {
@@ -601,11 +795,11 @@
 
   function overlayBoxPdfCoords() {
     const Hpx = pdfCanvas.value.height
-    const s   = pdfRenderScale.value || 1
+    const s = pdfRenderScale.value || 1
 
     return {
-      x:      overlayX.value / s,
-      y:     (Hpx - overlayY.value - overlayH.value) / s,
+      x: overlayX.value / s,
+      y: (Hpx - overlayY.value - overlayH.value) / s,
       width:  overlayW.value / s,
       height: overlayH.value / s,
     }
@@ -690,9 +884,6 @@
     sampleCol(Math.max(inset, W - 1 - inset))
 
     if (sums.size === 0) {
-      const [r,g,b,a] = ctx.getImageData(0,0,1,1).data
-      origBg.value = { r, g, b }
-      emit('update:bgcolor', rgbToHex(origBg.value))
       return
     }
 
@@ -824,7 +1015,7 @@
     const cr = parseInt(color.slice(1,3),16)
     const cg = parseInt(color.slice(3,5),16)
     const cb = parseInt(color.slice(5,7),16)
-    const A = 200
+    const A = 255
 
     const octx = mc.getContext('2d')
     const oIm = octx.createImageData(W,H)
@@ -912,7 +1103,6 @@
       }
     }
     ctxOff.putImageData(dst0, 0, 0);
-
 
     const ctx = off.getContext('2d');
     const blurred = ctx.getImageData(0, 0, W, H);
@@ -1076,24 +1266,28 @@
 
   function previewCropToContent () {
     const sourceCanvas = getSourceCanvas()
-    if (!sourceCanvas) {
-      return
-    }
+    if (!sourceCanvas) return
 
     const W = sourceCanvas.width
     const H = sourceCanvas.height
 
     let roiX = 0, roiY = 0, roiW = W, roiH = H
     if (overlayW.value > 0 && overlayH.value > 0) {
-      roiX = Math.max(0, Math.min(overlayX.value, W - 1))
-      roiY = Math.max(0, Math.min(overlayY.value, H - 1))
-      roiW = Math.max(1, Math.min(overlayW.value,  W - roiX))
-      roiH = Math.max(1, Math.min(overlayH.value, H - roiY))
+      const sx = Math.max(0, Math.floor(overlayX.value))
+      const sy = Math.max(0, Math.floor(overlayY.value))
+      const ex = Math.min(W, Math.floor(overlayX.value + overlayW.value))
+      const ey = Math.min(H, Math.floor(overlayY.value + overlayH.value))
+
+      roiX = Math.min(sx, W - 1)
+      roiY = Math.min(sy, H - 1)
+      roiW = Math.max(1, ex - sx)
+      roiH = Math.max(1, ey - sy)
     }
 
     const roi = document.createElement('canvas')
     roi.width = roiW; roi.height = roiH
-    roi.getContext('2d', { willReadFrequently: true }).drawImage(sourceCanvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH)
+    roi.getContext('2d', { willReadFrequently: true })
+      .drawImage(sourceCanvas, roiX, roiY, roiW, roiH, 0, 0, roiW, roiH)
 
     const width = roiW, height = roiH
     const context = roi.getContext('2d', { willReadFrequently: true })
@@ -1106,49 +1300,62 @@
       return dr * dr + dg * dg + db * db
     }
     const averagePatch = (cx, cy, r = 1) => {
-      let R=0,G=0,B=0,c=0
+      let R=0,G=0,B=0,c=0, lowAlpha=0
       for (let dy=-r; dy<=r; dy++){
         for (let dx=-r; dx<=r; dx++){
           const x = Math.min(width-1, Math.max(0, cx+dx))
           const y = Math.min(height-1, Math.max(0, cy+dy))
           const i = indexOf(x,y)
           R+=data[i]; G+=data[i+1]; B+=data[i+2]; c++
+          if (data[i+3] <= 12) lowAlpha++
         }
       }
-      return [R/c, G/c, B/c]
+      return { rgb:[R/c, G/c, B/c], lowAlphaRatio: lowAlpha/Math.max(1,c) }
     }
 
-    const c1 = averagePatch(0, 0)
-    const c2 = averagePatch(width-1, 0)
-    const c3 = averagePatch(0, height-1)
-    const c4 = averagePatch(width-1, height-1)
-    const bg = [(c1[0]+c2[0]+c3[0]+c4[0])/4, (c1[1]+c2[1]+c3[1]+c4[1])/4, (c1[2]+c2[2]+c3[2]+c4[2])/4]
+    const p1 = averagePatch(0, 0)
+    const p2 = averagePatch(width-1, 0)
+    const p3 = averagePatch(0, height-1)
+    const p4 = averagePatch(width-1, height-1)
 
-    const baseThreshold = isPdf.value ? 14 : 10
-    const devSq = (squaredDistance(...c1, ...bg) + squaredDistance(...c2, ...bg) + squaredDistance(...c3, ...bg) + squaredDistance(...c4, ...bg)) / 4
-    const tolSq = Math.max(baseThreshold*baseThreshold, devSq*4 + 16)
-    const alphaMin = 10
+    const avgAlpha = (p1.lowAlphaRatio + p2.lowAlphaRatio + p3.lowAlphaRatio + p4.lowAlphaRatio) / 4
+    const alphaOnly = avgAlpha > 0.5
+
+    let bg;
+    if (!alphaOnly) {
+      const cs = [p1.rgb, p2.rgb, p3.rgb, p4.rgb];
+      const groups = cs.map(c => ({ c, n: 1 }));
+      for (let i = 0; i < cs.length; i++) {
+        for (let j = i + 1; j < cs.length; j++) {
+          if (squaredDistance(...cs[i], ...cs[j]) < 25) groups[i].n++;
+        }
+      }
+      groups.sort((a, b) => b.n - a.n);
+      const top = groups[0].c;
+      bg = { r: Math.round(top[0]), g: Math.round(top[1]), b: Math.round(top[2]) };
+
+    } else {
+      bg = origBg.value;
+      console.log('Using alpha-based detection, bg:', bg, 'avgAlpha:', avgAlpha);
+    }
+
+    const tolSq = 400
+    const alphaMin = 12
 
     const visited = new Uint8Array(width * height)
     const q = []
 
     const tryPush = (x, y) => {
-      if (x < 0 || x >= width || y < 0 || y >= height) {
-        return
-      }
-      const id = y*width + x
-
-      if (visited[id]) {
-        return
-      }
-
-      const i = indexOf(x,y)
-      const a = data[i+3]
-      const isBg = (a <= alphaMin) || (squaredDistance(data[i],data[i+1],data[i+2], bg[0],bg[1],bg[2]) <= tolSq)
-      if (isBg) {
-        visited[id]=1; q.push(id)
-      }
-    }
+      if (x < 0 || x >= width || y < 0 || y >= height) return;
+      const id = y * width + x;
+      if (visited[id]) return;
+      const i = indexOf(x, y);
+      const a = data[i + 3];
+      const isBg = alphaOnly
+        ? (a <= alphaMin)
+        : (a <= alphaMin) || (squaredDistance(data[i], data[i + 1], data[i + 2], bg.r, bg.g, bg.b) <= tolSq);
+      if (isBg) { visited[id] = 1; q.push(id); }
+    };
 
     tryPush(0,0); tryPush(width-1,0); tryPush(0,height-1); tryPush(width-1,height-1)
     while (q.length){
@@ -1158,73 +1365,49 @@
     }
 
     let left = width, top = height, right = -1, bottom = -1
-    for (let y=0; y<height; y++){
-      for (let x=0; x<width; x++){
-        const id = y*width + x
-        if (visited[id]) {
-          continue
-        }
 
-        const i = indexOf(x,y)
-        const a = data[i+3]
-
-        if (a > alphaMin && squaredDistance(data[i],data[i+1],data[i+2], bg[0],bg[1],bg[2]) > tolSq){
-          if (x < left) {
-            left = x
-          }
-          if (x > right) {
-            right = x
-          }
-          if (y < top) {
-            top = y
-          }
-          if (y > bottom) {
-            bottom = y
-          }
-        }
+    const colAllBg = (x, yMin, yMax) => {
+      for (let y=yMin; y<=yMax; y++) {
+        if (!visited[y*width+x]) return false
       }
+      return true
     }
-    if (right < left || bottom < top) {
-      return
-    }
-
-    const colAllBg = (x) => { 
-      for (let y=top; y<=bottom; y++) {
-        if (!visited[y*width+x]) {
-          return false; 
-        }
-      } return true 
-    }
-
-    const rowAllBg = (y) => { 
-      for (let x=left; x<=right; x++) {
-        if (!visited[y*width+x]) {
-          return false;
-        }
+    const rowAllBg = (y, xMin, xMax) => {
+      for (let x=xMin; x<=xMax; x++) {
+        if (!visited[y*width+x]) return false
       }
       return true
     }
 
-    while (left < right  && colAllBg(left)) {
-      left++
-    }
-    while (left < right  && colAllBg(right)) {
-      right--
-    }
-    while (top  < bottom && rowAllBg(top)) {
-      top++
-    }
-    while (top  < bottom && rowAllBg(bottom)) {
-      bottom--
-    }
+    for (let x=0; x<width; x++) if (!colAllBg(x, 0, height-1)) { left = x; break }
+    for (let x=width-1; x>=0; x--) if (!colAllBg(x, 0, height-1)) { right = x; break }
+    for (let y=0; y<height; y++) if (!rowAllBg(y, 0, width-1)) { top = y; break }
+    for (let y=height-1; y>=0; y--) if (!rowAllBg(y, 0, width-1)) { bottom = y; break }
 
-    const newW = right - left + 1
-    const newH = bottom - top + 1
+    console.log('Initial bounds:', { left, right, top, bottom, width, height });
 
-    const newX = roiX + left
-    const newY = roiY + top
+    while (left < right && colAllBg(left, top, bottom))   left++
+    while (left < right && colAllBg(right, top, bottom))  right--
+    while (top < bottom && rowAllBg(top, left, right))    top++
+    while (top < bottom && rowAllBg(bottom, left, right)) bottom--
 
-    showOverlay(newW, newH, newX, newY)
+    console.log('Final bounds:', { left, right, top, bottom });
+
+    let newX = roiX + left
+    let newY = roiY + top
+    let newW = Math.max(1, right - left + 1)
+    let newH = Math.max(1, bottom - top + 1)
+
+    console.log('Result overlay:', { newX, newY, newW, newH, roiX, roiY, roiW, roiH });
+
+    const globalRight  = Math.min(W, newX + newW)
+    const globalBottom = Math.min(H, newY + newH)
+    const paddedX = Math.max(0, newX - 1)
+    const paddedY = Math.max(0, newY - 1)
+    const paddedW = Math.max(1, globalRight - paddedX)
+    const paddedH = Math.max(1, globalBottom - paddedY)
+
+    showOverlay(paddedW, paddedH, paddedX, paddedY)
   }
 
   async function cropToOverlay() {
@@ -1241,19 +1424,25 @@
 
       const pages   = srcDoc.getPages()
       const srcPage = pages[currentPage.value - 1]
-      const embedded = await outDoc.embedPage(srcPage, {
-        left: x,
-        bottom: y,
-        right: x + width,
-        top: y + height,
-      })
+      const { width: pageW, height: pageH } = srcPage.getSize()
 
-      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
+      let left   = Math.max(0, x)
+      let bottom = Math.max(0, y)
+      let right  = Math.min(pageW, x + width)
+      let top    = Math.min(pageH, y + height)
+
+      if (right <= left || top <= bottom) return
+
+      const embedded = await outDoc.embedPage(srcPage, { left, bottom, right, top })
+
+      const outW = Math.max(1, Math.round(right - left))
+      const outH = Math.max(1, Math.round(top - bottom))
+
+      outDoc.addPage([outW, outH]).drawPage(embedded, { x: 0, y: 0 })
 
       const newBytes = await outDoc.save()
       originalPdf.value = newBytes
       preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
-      originalFileName.value = 'cropped.pdf'
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
@@ -1262,39 +1451,58 @@
         name: 'cropped.pdf',
         type: 'application/pdf',
         size: newBytes.length,
-        width: Math.round(width),
-        height: Math.round(height),
+        width: outW,
+        height: outH,
         lastModified: Date.now(),
-        docSig: makeDocSig(), 
+        docSig: makeDocSig(),
       })
 
-      setupOverlay(width, height)
+      setupOverlay(outW, outH)
       await renderPdfPage()
       return
 
-    }else {
+    } else {
+      const img = imgEl.value
+      if (!img) return
+
+      const imgW = img.naturalWidth
+      const imgH = img.naturalHeight
+
+      const sx0 = overlayX.value
+      const sy0 = overlayY.value
+      const ex0 = overlayX.value + overlayW.value
+      const ey0 = overlayY.value + overlayH.value
+
+      const sx = Math.max(0, Math.floor(sx0))
+      const sy = Math.max(0, Math.floor(sy0))
+      const ex = Math.min(imgW, Math.floor(ex0))
+      const ey = Math.min(imgH, Math.floor(ey0))
+
+      const sw = Math.max(1, ex - sx)
+      const sh = Math.max(1, ey - sy)
+
       const c = document.createElement('canvas')
-      c.width = overlayW.value; c.height = overlayH.value
+      c.width = sw; c.height = sh
       const ctx = c.getContext('2d')
 
-      ctx.drawImage(
-        imgEl.value,
-        overlayX.value, overlayY.value, overlayW.value, overlayH.value,
-        0, 0, overlayW.value, overlayH.value
-      )
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
 
       const newSrc = c.toDataURL('image/png')
       preview.value = newSrc
+      const tmp = document.createElement('canvas')
+      tmp.width = sw; tmp.height = sh
+      tmp.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+      setHasAlpha(canvasHasAlpha(tmp))
 
       emit('update:preview', newSrc)
       emit('update:meta', {
         name: 'cropped.png', type: 'image/png',
         size: atob(newSrc.split(',')[1]).length,
-        width: overlayW.value, height: overlayH.value,
+        width: sw, height: sh,
         lastModified: Date.now()
       })
-      
-      setupOverlay(overlayW.value, overlayH.value)
+
+      setupOverlay(sw, sh)
     }
   }
 
@@ -1302,7 +1510,10 @@
     const src = getSourceCanvas()
     if (!src || !previewImg.value) return
 
-    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
+    const hasA = canvasHasAlpha(src)
+    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|${
+      hasA ? 'alpha' : `bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
+    }`
 
     if (matteKey !== key || !matteDataURL) {
       const MAX_PREV_PX = 2e6
@@ -1315,7 +1526,7 @@
       off.height = h
       off.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h)
 
-      matteDataURL = deblendToTransparent(off, origBg.value)
+      matteDataURL = hasA ? off.toDataURL('image/png') : deblendToTransparent(off, origBg.value)
       matteKey = key
     }
 
@@ -1341,10 +1552,131 @@
     endPreviewBackgroundColor()
 
     if (isPdf.value) {
-      suppressGalleryOnce.value = true
-      const pdf    = await getDocument({ data: pdfBytes() }).promise
+      const needsMatte = madeTransparentPdf.value || (pdfCanvas.value && canvasHasAlpha(pdfCanvas.value))
+
+      if (!needsMatte) {
+        emit('update:preview', preview.value)
+        emit('update:bgcolor', hexColor)
+        origBg.value = hexToRgb(hexColor)
+        checkerOn.value = false
+        await renderPdfPage()
+        return
+      }
+
+      const pdf = await getDocument({ data: pdfBytes() }).promise
       const outDoc = await PDFDocument.create()
-      const bg     = origBg.value
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p)
+
+        const vp1 = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const scale = Math.min(dpiScale, maxScaleByPixels)
+        const vp = page.getViewport({ scale })
+
+        const off = document.createElement('canvas')
+        off.width = Math.round(vp.width)
+        off.height = Math.round(vp.height)
+
+        await page.render({
+          canvasContext: off.getContext('2d', { willReadFrequently: true, alpha: true }),
+          viewport: vp,
+          background: 'rgba(0,0,0,0)'
+        }).promise
+
+        const matte = document.createElement('canvas')
+        matte.width = off.width
+        matte.height = off.height
+        const mctx = matte.getContext('2d', { willReadFrequently: true })
+        mctx.fillStyle = hexColor
+        mctx.fillRect(0, 0, matte.width, matte.height)
+        mctx.drawImage(off, 0, 0)
+
+        const pngBytes = dataURLtoU8(matte.toDataURL('image/png'))
+        const pngImg = await outDoc.embedPng(pngBytes)
+        const wPt = vp1.width
+        const hPt = vp1.height
+        const outPage = outDoc.addPage([wPt, hPt])
+        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
+      }
+
+      const newBytes = await outDoc.save()
+      originalPdf.value = newBytes
+
+      preview.value = URL.createObjectURL(
+        new Blob([newBytes], { type: 'application/pdf' })
+      )
+
+      originalFileSize.value = newBytes.length
+      originalLastModified.value = Date.now()
+
+      emit('update:preview', preview.value)
+      emit('update:bgcolor', hexColor)
+      origBg.value = hexToRgb(hexColor)
+
+      madeTransparentPdf.value = false
+      checkerOn.value = false
+      setHasAlpha(false)
+      await renderPdfPage()
+      return
+    }
+
+    const img = imgEl.value
+    if (!img?.naturalWidth) return
+    const w = img.naturalWidth, h = img.naturalHeight
+
+    const src = document.createElement('canvas')
+    src.width = w
+    src.height = h
+    src.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+
+    let newSrc
+    if (!hasAlpha.value && !hasAlphaImage(img)) {
+      newSrc = colorToAlphaAndFillCanvas(src, hexColor, origBg.value)
+
+    } else {
+      const matte = document.createElement('canvas')
+      matte.width = w
+      matte.height = h
+      const mctx = matte.getContext('2d', { willReadFrequently: true })
+      mctx.fillStyle = hexColor
+      mctx.fillRect(0, 0, w, h)
+      mctx.drawImage(src, 0, 0)
+      newSrc = matte.toDataURL('image/png')
+    }
+
+    preview.value = newSrc
+    emit('update:preview', newSrc)
+    emit('update:bgcolor', hexColor)
+    emit('update:meta', {
+      name: (originalFileName.value || 'image').replace(/\.[^.]+$/, '') + '-matte.png',
+      type: 'image/png',
+      size: atob(newSrc.split(',')[1]).length,
+      width: w,
+      height: h,
+      lastModified: Date.now(),
+    })
+
+    origBg.value = hexToRgb(hexColor)
+    madeTransparentImg.value = false
+    setHasAlpha(false)
+    checkerOn.value = false
+    if (panCont.value) panCont.value.style.backgroundColor = hexColor
+  }
+
+  async function removeBackground() {
+    if (!isPdf.value && hasAlphaImage(imgEl.value)) { return }
+
+    pushHistory()
+
+    if (isPdf.value) {
+      suppressGalleryOnce.value = true
+
+      const pdf  = await getDocument({ data: pdfBytes() }).promise
+      const outDoc  = await PDFDocument.create()
+      const bg   = origBg.value
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p)
@@ -1358,15 +1690,15 @@
         const off = document.createElement('canvas')
         off.width = Math.round(vp.width)
         off.height = Math.round(vp.height)
-
         await page.render({
-          canvasContext: off.getContext('2d', { willReadFrequently: true }),
-          viewport: vp
+           canvasContext: off.getContext('2d', { willReadFrequently: true }),
+           viewport: vp,
+           background: 'rgba(0,0,0,0)'
         }).promise
 
-        const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, bg)
+        const dataUrl = deblendToTransparent(off, bg)
         const pngBytes = dataURLtoU8(dataUrl)
-        const pngImg = await outDoc.embedPng(pngBytes)
+        const pngImg   = await outDoc.embedPng(pngBytes)
 
         const wPt = vp1.width
         const hPt = vp1.height
@@ -1381,23 +1713,63 @@
       originalLastModified.value = Date.now()
 
       emit('update:preview', preview.value)
-      emit('update:bgcolor', hexColor)
+      madeTransparentPdf.value = true
+      checkerOn.value = true
+      setHasAlpha(true)
+
       await renderPdfPage()
-      origBg.value = hexToRgb(hexColor)
       return
     }
 
-    const img = imgEl.value; if (!img) return
+    const img = imgEl.value
+    if (!img?.naturalWidth) return
+
     const w = img.naturalWidth, h = img.naturalHeight
     const off = document.createElement('canvas')
     off.width = w; off.height = h
     off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, w, h)
 
-    const dataUrl = colorToAlphaAndFillCanvas(off, hexColor, origBg.value)
+    const dataUrl = deblendToTransparent(off, origBg.value)
     preview.value = dataUrl
+
     emit('update:preview', dataUrl)
-    emit('update:bgcolor', hexColor)
-    origBg.value = hexToRgb(hexColor)
+    emit('update:meta', {
+      name: originalFileName.value,
+      type: originalFileType.value,
+      size: atob(dataUrl.split(',')[1]).length,
+      width: w, height: h,
+      lastModified: Date.now()
+    })
+
+    setupOverlay(w, h)
+
+    madeTransparentImg.value = true
+    checkerOn.value = true
+    setHasAlpha(true)
+  }
+
+  function canvasHasAlpha(src, stepHint = 200) {
+    if (!src?.width || !src?.height) return false
+
+    const w = src.width, h = src.height
+    const ctx = src.getContext('2d', { willReadFrequently: true })
+    const step = Math.max(1, Math.floor(Math.min(w, h) / stepHint))
+
+    for (let y = 0; y < h; y += step) {
+      const row = ctx.getImageData(0, y, w, 1).data
+
+      for (let x = 0; x < w; x += step) {
+        if (row[x * 4 + 3] < 255) return true
+      }
+    }
+    return false
+  }
+
+  function setHasAlpha(val) {
+    hasAlpha.value = !!val
+    checkerOn.value = !!val
+    emit('update:has-alpha', hasAlpha.value)
+    if (panCont.value) panCont.value.style.backgroundColor = ''
   }
 
   function colorToAlphaAndFillCanvas(canvas, hexColor, bgRGB) {
@@ -1411,6 +1783,7 @@
       value /= 255
       return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
     }
+
     const linearToSrgb = (value) => {
       value = value <= 0.0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - 0.055
       return Math.max(0, Math.min(255, Math.round(value * 255)))
@@ -1430,9 +1803,7 @@
 
       const alphaFromRed = baseRedLinear < 1e-6
         ? (srcRedLinear > baseRedLinear ? 1 : 0)
-        : (srcRedLinear >= baseRedLinear
-            ? (srcRedLinear - baseRedLinear) / (1 - baseRedLinear)
-            : (baseRedLinear - srcRedLinear) / baseRedLinear)
+        : (srcRedLinear >= baseRedLinear ? (srcRedLinear - baseRedLinear) / (1 - baseRedLinear) : (baseRedLinear - srcRedLinear) / baseRedLinear)
 
       const alphaFromGreen = baseGreenLinear < 1e-6
         ? (srcGreenLinear > baseGreenLinear ? 1 : 0)
@@ -1453,9 +1824,9 @@
 
       let foreRedLinear = 0, foreGreenLinear = 0, foreBlueLinear = 0
       if (alpha > 1e-5) {
-        foreRedLinear = (srcRedLinear   - (1 - alpha) * baseRedLinear)   / alpha
+        foreRedLinear = (srcRedLinear - (1 - alpha) * baseRedLinear) / alpha
         foreGreenLinear = (srcGreenLinear - (1 - alpha) * baseGreenLinear) / alpha
-        foreBlueLinear = (srcBlueLinear  - (1 - alpha) * baseBlueLinear)  / alpha
+        foreBlueLinear = (srcBlueLinear - (1 - alpha) * baseBlueLinear) / alpha
       }
 
       data[index] = linearToSrgb(foreRedLinear)
@@ -1510,7 +1881,7 @@
         fb = (bL - (1 - a) * bb) / a
       }
 
-      data[i]   = linearToSrgb(fr)
+      data[i] = linearToSrgb(fr)
       data[i+1] = linearToSrgb(fg)
       data[i+2] = linearToSrgb(fb)
       data[i+3] = Math.round(a * 255)
@@ -1567,7 +1938,7 @@
     if (isPdf.value) {
       suppressGalleryOnce.value = true
       const pdf = await getDocument({ data: pdfBytes() }).promise
-      const out = await PDFDocument.create()
+      const outDoc = await PDFDocument.create()
 
       for (let p = 1; p <= pdf.numPages; p++) {
         const page = await pdf.getPage(p)
@@ -1584,20 +1955,21 @@
 
         await page.render({
           canvasContext: off.getContext('2d', { willReadFrequently: true }),
-          viewport: vp
+          viewport: vp,
+          background: 'rgba(0,0,0,0)'
         }).promise
 
         grayscaleCanvas(off, strength, mode)
 
         const pngBytes = dataURLtoU8(off.toDataURL('image/png'))
-        const pngImg = await out.embedPng(pngBytes)
+        const pngImg = await outDoc.embedPng(pngBytes)
         const wPt = vp1.width
         const hPt = vp1.height
         const outPage = outDoc.addPage([wPt, hPt])
         outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
       }
 
-      const newBytes = await out.save()
+      const newBytes = await outDoc.save()
       originalPdf.value = newBytes
       preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
@@ -1759,7 +2131,12 @@
       const off = document.createElement('canvas')
       off.width = Math.round(vp.width)
       off.height = Math.round(vp.height)
-      await page.render({ canvasContext: off.getContext('2d', { willReadFrequently: true }), viewport: vp }).promise
+
+      await page.render({
+        canvasContext: off.getContext('2d', { willReadFrequently: true, alpha: true }),
+        viewport: vp,
+        background: 'rgba(0,0,0,0)'
+      }).promise
 
       const factor = (scale / (pdfRenderScale.value || 1))
       const hasOverlay = overlayW.value > 0 && overlayH.value > 0
@@ -1769,13 +2146,15 @@
       const oh = hasOverlay ? Math.round(overlayH.value * factor) : off.height
 
       const out = document.createElement('canvas')
-      out.width = ow; out.height = oh
+      out.width = ow
+      out.height = oh
       const octx = out.getContext('2d')
       octx.drawImage(off, ox, oy, ow, oh, 0, 0, ow, oh)
 
       let url
       if (format === 'png') {
         url = out.toDataURL('image/png')
+
       } else {
         const white = document.createElement('canvas')
         white.width = ow; white.height = oh
@@ -1785,6 +2164,7 @@
         wctx.drawImage(out, 0, 0)
         url = white.toDataURL('image/jpeg', JPG_QUALITY)
       }
+
       triggerDownload(url, filename)
       return
     }
@@ -1814,6 +2194,7 @@
       const imgPng = await outDoc.embedPng(pngBytes)
       const page = outDoc.addPage([w, h])
       page.drawImage(imgPng, { x: 0, y: 0, width: w, height: h })
+
       const bytes = await outDoc.save()
       const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
       triggerDownload(url, filename)
@@ -1832,7 +2213,7 @@
       const srcDoc = await PDFDocument.load(pdfBytes())
       const outDoc = await PDFDocument.create()
 
-      const pages   = srcDoc.getPages()
+      const pages = srcDoc.getPages()
       const srcPage = pages[currentPage.value - 1]
       const { width: pageW, height: pageH } = srcPage.getSize()
 
@@ -1887,7 +2268,7 @@
   function dataURLtoU8(dataURL) {
     const b64 = dataURL.split(',')[1]
     const bin = atob(b64)
-    const u8  = new Uint8Array(bin.length)
+    const u8 = new Uint8Array(bin.length)
 
     for (let i=0;i<bin.length;i++) {
       u8[i] = bin.charCodeAt(i)
@@ -1911,11 +2292,146 @@
     }
   })
 
-  function overlayOrFull() { 
-    const has = overlayW.value > 0 && overlayH.value > 0 
-    return has ? { x: overlayX.value, y: overlayY.value, w: overlayW.value, h: overlayH.value } : { x: 0, y: 0, w: maxW.value, h: maxH.value } 
+  function toggleOverlayVisibility(visible) {
+    overlayVisible.value = visible
   }
-  
+
+  const CAL_KEY = 'imageDrop.cssBaseDpi'
+  const calibrationBaseCssDpi = ref(null)
+  const calOpen = ref(false)
+  const calMeasuredMm = ref(100)
+  const calLineEl = ref(null)
+  const calCssPx = ref(0)
+  const calError = ref('')
+
+  function measureCalLinePx() {
+    if (calLineEl.value) {
+      calCssPx.value = calLineEl.value.getBoundingClientRect().width
+    }
+  }
+
+  function getPageZoomSafe() {
+    return (window.visualViewport && typeof window.visualViewport.scale === 'number') ? (window.visualViewport.scale || 1) : 1
+  }
+
+  function applyCalibratedEffectiveDpiFromBase() {
+    if (!calibrationBaseCssDpi.value) return
+    const zoom = getPageZoomSafe()
+    screenDPI.value = calibrationBaseCssDpi.value / zoom
+
+    recomputeScaleBounds()
+    updateDisplayScale()
+  }
+
+  function attachCalibrationListeners() {
+    window.visualViewport?.addEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+    window.addEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+  }
+
+  function detachCalibrationListeners() {
+    window.visualViewport?.removeEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+    window.removeEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+  }
+
+  function openCalibration() {
+    calOpen.value = true
+    nextTick(() => {
+      measureCalLinePx()
+
+      if (calibrationBaseCssDpi.value && calCssPx.value > 0) {
+        const effectiveCssDpi = calibrationBaseCssDpi.value / getPageZoomSafe()
+        const savedMm = (calCssPx.value * 25.4) / effectiveCssDpi
+        calMeasuredMm.value = Math.round(savedMm * 10) / 10
+
+      } else {
+        calMeasuredMm.value = 100
+      }
+
+      window.addEventListener('resize', measureCalLinePx)
+    })
+  }
+
+  function closeCalibration() {
+    calOpen.value = false
+    calError.value = ''
+    window.removeEventListener('resize', measureCalLinePx)
+  }
+
+  function applyCalibration() {
+    measureCalLinePx()
+    const mm = Number(calMeasuredMm.value)
+    if (!Number.isFinite(mm) || mm <= 0) {
+      calError.value = 'Please enter a positive value in mm.'
+      return
+    }
+
+    const effectiveCssDpi = (calCssPx.value * 25.4) / mm
+    const baseCssDpi = effectiveCssDpi * getPageZoomSafe()
+
+    const oldDpi = screenDPI.value
+    calibrationBaseCssDpi.value = baseCssDpi
+    localStorage.setItem(CAL_KEY, String(baseCssDpi))
+
+    detachCalibrationListeners()
+    attachCalibrationListeners()
+
+    const newDpi = baseCssDpi / getPageZoomSafe()
+    screenDPI.value = newDpi
+
+    if (pz && basePixelWidth.value > 0) {
+      const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value;
+      const targetScreenWidthPx = referenceWidthPx;
+      const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
+      const targetUserScale = targetAbsoluteScale / initialScale.value
+
+      const r = panCont.value.getBoundingClientRect()
+      const cx = r.left + r.width / 2
+      const cy = r.top  + r.height / 2
+      pz.zoomAbs(cx, cy, targetUserScale)
+    }
+
+    displayScale.value = 100
+    recomputeScaleBounds()
+    updateDisplayScale()
+    closeCalibration()
+  }
+
+  function clearCalibration() {
+    localStorage.removeItem(CAL_KEY)
+    calibrationBaseCssDpi.value = null
+    detachCalibrationListeners()
+    measureCssDpi1in()
+    recomputeScaleBounds()
+    updateDisplayScale()
+  }
+
+  function measureCssDpi1in () {
+    const el = document.createElement('div')
+    el.style.width = '1in'
+    el.style.position = 'absolute'
+    el.style.visibility = 'hidden'
+    document.body.appendChild(el)
+    const cssDpi = el.offsetWidth || 96
+    document.body.removeChild(el)
+    screenDPI.value = cssDpi
+    recomputeScaleBounds()
+    updateDisplayScale()
+  }
+
+  onMounted(() => {
+    const savedBase = parseFloat(localStorage.getItem(CAL_KEY))
+    if (Number.isFinite(savedBase) && savedBase > 20 && savedBase < 2000) {
+      calibrationBaseCssDpi.value = savedBase
+      attachCalibrationListeners()
+      applyCalibratedEffectiveDpiFromBase()
+    } else {
+      measureCssDpi1in()
+    }
+
+    ro = new ResizeObserver(() => adjustForContainerResize())
+    if (previewWrap.value) ro.observe(previewWrap.value)
+  })
+
   defineExpose({
     setBackgroundColor,
     previewCropToContent,
@@ -1937,6 +2453,12 @@
     undo,
     resetToOriginal,
     loadExternalFile,
+    toggleOverlayVisibility,
+    setDisplayScale,
+    setReferenceWidth,
+    removeBackground,
+    openCalibration,
+    clearCalibration 
   })
 </script>
 
@@ -1958,7 +2480,7 @@
     position: relative;
     width:100%;
     height:100%;
-    background: #fff;
+    background: transparent;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1972,10 +2494,20 @@
     
   .preview-img, .preview-canvas {
     position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     user-select: none;
+  }
+
+  .preview-canvas{
+    background: transparent;
+  }
+
+  .checkerboard {
+    background: conic-gradient(#e9e9e9 25%, #ffffff 0 50%, #e9e9e9 0 75%, #ffffff 0) 0 0 / 16px 16px;
   }
 
   .preview-layer {
@@ -2071,5 +2603,84 @@
     left: -5px;
     transform: translateY(-50%);
     cursor: w-resize
+  }
+
+  .calib-backdrop{
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.35);
+    display: grid;
+    place-items: center;
+    z-index: 1000;
+  }
+
+  .calib-modal{
+    background: #fff; 
+    border-radius: 10px;
+    padding: 16px 18px;
+    width: min(620px, 90vw);
+    box-shadow: 0 10px 30px rgba(0,0,0,.25);
+    color: #000;
+  }
+
+  .calib-modal h3 {
+    color: #000;
+  }
+
+  .calib-modal p, .calib-modal small {
+    color: #000;
+  }
+
+  .calib-line-wrap{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin: 16px 0;
+  }
+
+  .calib-line{
+    width: clamp(180px, 40vw, 400px);
+    height: 2px; 
+    background: #111;
+    position: relative;
+  }
+
+  .cap{
+    font-weight: 700;
+    user-select: none;
+  }
+
+  .calib-controls{
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .calib-controls input{
+    width: 120px; margin-left: 6px;
+  }
+
+  .calib-controls .primary{
+    padding: .4rem .7rem;
+    border: 0;
+    border-radius: 6px;
+    background: #28a745;
+    color: white; 
+    cursor: pointer;
+  }
+
+  .calib-controls button:not(.primary){
+    padding: .35rem .6rem;
+    border-radius: 6px; 
+    background: #e53935; cursor: pointer;
+    border: none;
+    color: white;
+  }
+
+  .calib-error{
+    color:#c00;
+    margin: 4px 0 0;
   }
 </style>

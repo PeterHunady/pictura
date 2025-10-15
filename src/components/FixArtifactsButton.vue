@@ -1,7 +1,7 @@
 <template>
   <div class="enhance">
     <button class="enhance-toggle" @click="collapsed = !collapsed">
-      <span>Enhance Quality</span>
+      <span>JPEG artifacts</span>
       <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
     </button>
 
