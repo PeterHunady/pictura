@@ -419,6 +419,7 @@
 
     for (let y = 0; y < h; y += step) {
       const row = ctx.getImageData(0, y, w, 1).data
+      
       for (let x = 0; x < w; x += step) {
         const a = row[x * 4 + 3]
         if (a < 255) return true
