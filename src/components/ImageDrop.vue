@@ -1181,7 +1181,8 @@
   .calib-controls button:not(.primary){
     padding: .35rem .6rem;
     border-radius: 6px; 
-    background: #e53935; cursor: pointer;
+    background: #e53935;
+    cursor: pointer;
     border: none;
     color: white;
   }
