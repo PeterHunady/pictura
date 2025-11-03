@@ -1,5 +1,5 @@
 // analytics.js
-const ENDPOINT = "https://pictura-logger.onrender.com/collect"; // ← tvoje URL
+const ENDPOINT = "https://https://visiontrainings.endora.site/collect";
 
 let state = {
   sessionId: null,
