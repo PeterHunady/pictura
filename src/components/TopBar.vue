@@ -17,6 +17,15 @@
           <span class="scale-unit">%</span>
           <button class="scale-btn" @click="incrementScale">+</button>
           <button class="dropdown-btn" @click="toggleDropdown">↓</button>
+          <span
+            v-if="!isCalibrated"
+            class="warn-wrap"
+            @mouseenter="showPctTooltip = true"
+            @mouseleave="showPctTooltip = false"
+          >
+            <img :src="exclamationMark" class="warn-badge" alt="No calibration set yet" />
+            <span v-show="showPctTooltip" class="warn-tooltip">No calibration set yet</span>
+        </span>
         </div>
 
         <div v-if="dropdownOpen" class="scale-dropdown">
@@ -76,6 +85,7 @@
   import resetIcon from '@/assets/reset.png'
   import visibleIcon from '@/assets/visible.png'
   import invisibleIcon from '@/assets/invisible.png'
+  import exclamationMark from '@/assets/exclamationMark.png'
 
   const props = defineProps({
     rightGap: { type: String, default: 'min(30vw, 300px)' },
@@ -88,6 +98,9 @@
     minScale: { type: Number, default: 1 },
     maxScale: { type: Number, default: 10000 },
   })
+
+  const showPctTooltip = ref(false)
+  const showCalibTooltip = ref(false)
 
   const emit = defineEmits([
     'undo','reset','visible',
@@ -365,5 +378,46 @@
 
   .ref-action.danger:hover {
     background: #ffecec;
+  }
+
+  .warn-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 4px;
+  }
+
+  .warn-badge {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    vertical-align: middle;
+    cursor: default;
+  }
+
+  .warn-tooltip {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    top: 120%;
+    white-space: nowrap;
+    background: #111;
+    color: #fff;
+    font-size: 11px;
+    line-height: 1;
+    padding: 6px 8px;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+    z-index: 9999;
+  }
+
+  .warn-tooltip--below {
+    top: 140%;
+  }
+
+  .calib-action-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 </style>

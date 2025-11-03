@@ -1,4 +1,5 @@
-const ENDPOINT = window.PICTURA_ANALYTICS_URL || "";
+const ENDPOINT = "https://visiontrainings.endora.site/collect";
+;
 
 let state = {
     sessionId: null,

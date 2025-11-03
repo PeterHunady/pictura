@@ -1,12 +1,12 @@
 <template>
     <div class="app-container">
         <TopBar
+            :isCalibrated="isCalibrated"
             :show-scale="showScale"
             :display-scale="displayScale"
             :reference-width-mm="referenceWidthMm"
             :min-scale="minScale"
             :max-scale="maxScale"
-            :is-calibrated="!!calibrationBaseCssDpi"
             @update:scale="onScaleUpdate"
             @update:reference-width="onReferenceWidthUpdate"
             @visible="onToggleCropVisible"
@@ -100,6 +100,15 @@
     const exportType = ref(null)
     const editingNow = ref(false)
     const sourceSig = ref(null)
+    const isCalibrated = computed(() => calibrationBaseCssDpi.value != null)
+
+    onMounted(() => {
+        if (typeof window === 'undefined') return
+        const saved = parseFloat(localStorage.getItem('imageDrop.cssBaseDpi'))
+        if (Number.isFinite(saved) && saved > 20 && saved < 2000) {
+            calibrationBaseCssDpi.value = saved
+        }
+    })
 
     const sidebarCollapsed = ref(false)
     const rightGap = computed(() =>
