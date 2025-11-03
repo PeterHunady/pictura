@@ -42,7 +42,6 @@
   })
 
   const emit = defineEmits(['export','request-preview'])
-
   const collapsed = ref(true)
   const name = ref('')
   const format = ref('png')
