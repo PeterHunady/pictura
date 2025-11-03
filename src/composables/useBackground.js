@@ -259,6 +259,7 @@ export function useBackground({
     preview.value = dataUrl
 
     emit('update:preview', dataUrl)
+    
     emit('update:meta', {
       name: originalFileName.value,
       type: originalFileType.value,
