@@ -288,6 +288,7 @@
         const isNewDoc = sig !== sourceSig.value && !editingNow.value
 
         if (isNewDoc) {
+            if (!analytics.hasActive?.()) analytics.startSession()
             exportName.value = meta?.name || 'export'
             exportType.value = meta?.type || ''
 

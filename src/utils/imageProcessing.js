@@ -1,11 +1,3 @@
-/**
- * Image Processing Utilities
- * Helper functions for image manipulation and analysis
- */
-
-/**
- * Apply bilateral filter to RGB image data
- */
 export function bilateralOnceRGB(S, W, H, r = 2, sigmaS = 2, sigmaR = 25) {
   const twoσs2 = 2 * sigmaS * sigmaS
   const twoσr2 = 2 * sigmaR * sigmaR
@@ -52,9 +44,6 @@ export function bilateralOnceRGB(S, W, H, r = 2, sigmaS = 2, sigmaR = 25) {
   return out
 }
 
-/**
- * Calculate Sobel magnitude for edge detection
- */
 export function sobelMag(Y, W, H){
   const M = new Float32Array(W*H)
 
@@ -70,9 +59,6 @@ export function sobelMag(Y, W, H){
   return M
 }
 
-/**
- * Dilate mask by 1 pixel
- */
 export function dilate1px(mask, W, H){
   const out = new Uint8Array(W*H)
 
@@ -100,9 +86,6 @@ export function dilate1px(mask, W, H){
   return out
 }
 
-/**
- * Apply Gaussian blur to image data
- */
 export function gaussianBlur(imageData, W, H, kSize, sigma){
   const data = imageData.data;
   const half = Math.floor(kSize/2);
@@ -188,16 +171,10 @@ export function hasAlphaImage(imageEl) {
   return false
 }
 
-/**
- * Convert canvas to blob
- */
 export function canvasToBlob(canvas, type) {
   return new Promise(res => canvas.toBlob(b => res(b), type))
 }
 
-/**
- * Convert data URL to Uint8Array
- */
 export function dataURLtoU8(dataURL) {
   const b64 = dataURL.split(',')[1]
   const bin = atob(b64)
@@ -209,16 +186,10 @@ export function dataURLtoU8(dataURL) {
   return u8
 }
 
-/**
- * Get file extension from format
- */
 export function extOf(fmt) {
   return fmt === 'jpg' ? 'jpg' : (fmt === 'png' ? 'png' : 'pdf')
 }
 
-/**
- * Convert hex color to RGB object
- */
 export function hexToRgb(hex) {
   let c = (hex || '').replace('#','').trim()
   if (c.length === 3) c = c.split('').map(ch => ch + ch).join('')
@@ -230,9 +201,6 @@ export function hexToRgb(hex) {
   }
 }
 
-/**
- * Convert RGB object to hex color
- */
 export function rgbToHex({ r, g, b }) {
   const to2 = v => v.toString(16).padStart(2,'0')
   return '#' + to2(r) + to2(g) + to2(b)
