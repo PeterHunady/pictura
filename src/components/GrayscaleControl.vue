@@ -128,6 +128,7 @@
   }
 
   .apply-btn {
+    width: 100%;
     background: #28a745;
     color: #fff;
     border: none;

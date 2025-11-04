@@ -104,7 +104,7 @@
               Measured length (mm):
               <input type="number" v-model.number="calMeasuredMm" min="10" max="1000" step="0.1">
             </label>
-            <button class="primary" @click="applyCalibration">Apply</button>
+            <button class="primary" @click="handleApplyCalibration">Apply</button>
             <button @click="closeCalibration">Cancel</button>
           </div>
         </div>
@@ -148,7 +148,7 @@
           </div>
 
           <div class="calib-controls">
-            <button class="primary" @click="applyCardCalibration">Apply</button>
+            <button class="primary" @click="handleApplyCardCalibration">Apply</button>
             <button @click="closeCalibration">Cancel</button>
           </div>
         </div>
@@ -349,6 +349,14 @@
     initCalibration,
     detachCalibrationListeners
   } = calibrationComposable
+
+  function handleApplyCalibration() {
+    applyCalibration(getPanzoom(), basePixelWidth, initialScale, panCont, displayScale)
+  }
+
+  function handleApplyCardCalibration() {
+    applyCardCalibration(getPanzoom(), basePixelWidth, initialScale, panCont, displayScale)
+  }
 
   const backgroundComposable = useBackground({
     isPdf,

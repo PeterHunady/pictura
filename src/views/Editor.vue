@@ -170,6 +170,13 @@
     let exportTimer = null
 
     async function onRequestExportPreview({ name, format }) {
+         const prev = lastExportFormat.value
+        if (format && format !== prev) {
+            recordAction('export_format_change', { from: prev, to: format })
+            lastExportFormat.value = format
+        }
+
+
         if (format) lastExportFormat.value = format
         exportLoading.value = true
         try {
@@ -205,8 +212,15 @@
     onUnmounted(() => clearTimeout(exportTimer))
 
     async function onExport({ name, format }) {
+        const finalFormat = format || lastExportFormat.value || 'png'
+
         const res = await dropRef.value?.estimateExport({ format })
         if (!res?.blob) return
+
+        recordAction('export', {
+            format: finalFormat,
+            bytes: res?.sizeBytes ?? res?.blob?.size ?? null
+        })
 
         if (!analytics.hasActive?.()) analytics.startSession()
 

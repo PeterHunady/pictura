@@ -201,6 +201,7 @@
   }
 
   .apply-btn {
+    flex: 1;
     padding: 0.6rem 1rem;
     border: none;
     background: #28a745;
@@ -211,14 +212,14 @@
   }
 
   .arrow-right, .arrow-down {
-    width: 0; 
+    width: 0;
     height: 0;
     display: inline-block;
     border-top: 5px solid transparent;
     border-bottom: 5px solid transparent;
   }
 
-  .arrow-right { 
+  .arrow-right {
     border-left: 8px solid #333;
   }
 
@@ -234,6 +235,7 @@
   }
 
   .remove-btn {
+    flex: 1;
     padding: 0.6rem 1rem;
     border: none;
     background: #e53935;
