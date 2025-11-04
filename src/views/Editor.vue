@@ -170,7 +170,7 @@
     let exportTimer = null
 
     async function onRequestExportPreview({ name, format }) {
-         const prev = lastExportFormat.value
+        const prev = lastExportFormat.value
         if (format && format !== prev) {
             recordAction('export_format_change', { from: prev, to: format })
             lastExportFormat.value = format
