@@ -19,19 +19,19 @@ function uuidv4() {
 }
 
 function postPayload(payload) {
-  if (!ENDPOINT) {
-    console.warn("[analytics] PICTURA_ANALYTICS_URL nie je nastavené – nič neposielam.");
-    return false;
-  }
+  if (!ENDPOINT) return false;
+
   const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-  if (navigator.sendBeacon) return navigator.sendBeacon(ENDPOINT, blob);
+
+  if (navigator.sendBeacon) {
+    return navigator.sendBeacon(ENDPOINT, blob);
+  }
 
   fetch(ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
     keepalive: true,
-    mode: "no-cors",
   }).catch(() => {});
   return true;
 }
