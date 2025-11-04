@@ -68,17 +68,57 @@ export function useExport({
       return { blob, sizeBytes: size, ext: format, mime }
     }
 
+    // IMAGE EXPORT (not PDF input)
     const img = imgEl.value
     if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
 
-    const sx = overlayW.value > 0 ? overlayX.value : 0
-    const sy = overlayH.value > 0 ? overlayY.value : 0
-    const sw = overlayW.value > 0 ? overlayW.value : img.naturalWidth
-    const sh = overlayH.value > 0 ? overlayH.value : img.naturalHeight
+    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+    const sx = hasOverlay ? overlayX.value : 0
+    const sy = hasOverlay ? overlayY.value : 0
+    const sw = hasOverlay ? overlayW.value : img.naturalWidth
+    const sh = hasOverlay ? overlayH.value : img.naturalHeight
 
     const c = document.createElement('canvas')
     c.width = sw; c.height = sh
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+
+    // Handle PDF export from PNG/JPG image
+    if (format === 'pdf') {
+      try {
+        const outDoc = await PDFDocument.create()
+
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = sw
+        tempCanvas.height = sh
+        const tempCtx = tempCanvas.getContext('2d')
+        tempCtx.fillStyle = '#ffffff'
+        tempCtx.fillRect(0, 0, sw, sh)
+        tempCtx.drawImage(c, 0, 0)
+
+        const jpegBlob = await canvasToBlob(tempCanvas, 'image/jpeg')
+        const jpegArrayBuffer = await jpegBlob.arrayBuffer()
+        const jpegBytes = new Uint8Array(jpegArrayBuffer)
+
+        const imgJpeg = await outDoc.embedJpg(jpegBytes)
+        const imgDims = imgJpeg.scale(1)
+
+        const page = outDoc.addPage([imgDims.width, imgDims.height])
+        page.drawImage(imgJpeg, {
+          x: 0,
+          y: 0,
+          width: imgDims.width,
+          height: imgDims.height
+        })
+
+        const bytes = await outDoc.save()
+        const blob = new Blob([bytes], { type: 'application/pdf' })
+        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
+
+      } catch (error) {
+        console.error('PDF creation error:', error)
+        return { blob: null, sizeBytes: 0, ext: format }
+      }
+    }
 
     const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
     const blob  = await canvasToBlob(c, mime)
@@ -189,15 +229,53 @@ export function useExport({
     ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
 
     if (format === 'pdf') {
-      const pngBytes = dataURLtoU8(c.toDataURL('image/png'))
-      const outDoc = await PDFDocument.create()
-      const imgPng = await outDoc.embedPng(pngBytes)
-      const page = outDoc.addPage([w, h])
-      page.drawImage(imgPng, { x: 0, y: 0, width: w, height: h })
+      try {
+        const outDoc = await PDFDocument.create()
 
-      const bytes = await outDoc.save()
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
-      triggerDownload(url, filename)
+        // Create a white background canvas with image
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = w
+        tempCanvas.height = h
+        const tempCtx = tempCanvas.getContext('2d')
+        tempCtx.fillStyle = '#ffffff'
+        tempCtx.fillRect(0, 0, w, h)
+        tempCtx.drawImage(c, 0, 0)
+
+        // Convert to JPEG
+        const jpegBlob = await canvasToBlob(tempCanvas, 'image/jpeg')
+        const jpegArrayBuffer = await jpegBlob.arrayBuffer()
+        const jpegBytes = new Uint8Array(jpegArrayBuffer)
+
+        const imgJpeg = await outDoc.embedJpg(jpegBytes)
+        const imgDims = imgJpeg.scale(1)
+
+        const page = outDoc.addPage([imgDims.width, imgDims.height])
+        page.drawImage(imgJpeg, {
+          x: 0,
+          y: 0,
+          width: imgDims.width,
+          height: imgDims.height
+        })
+
+        const bytes = await outDoc.save()
+        const blob = new Blob([bytes], { type: 'application/pdf' })
+        const url = URL.createObjectURL(blob)
+
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+
+        setTimeout(() => {
+          document.body.removeChild(a)
+          URL.revokeObjectURL(url)
+        }, 100)
+
+      } catch (error) {
+        console.error('PDF export error:', error)
+        alert('Failed to create PDF: ' + error.message)
+      }
       return
     }
 

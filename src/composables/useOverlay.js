@@ -12,6 +12,9 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
   let resizeDir = null
   const resizeStart = {}
 
+  let dragging = false
+  const dragStart = {}
+
   const overlayStyle = computed(() => {
     const s = initialScale.value || 1
 
@@ -85,11 +88,11 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     resizeDir = dir
     resizeStart.rect = panCont.value.getBoundingClientRect()
 
-    if (pz) {
-      pz.pause()
+    if (pz && pz()) {
+      pz().pause()
     }
 
-    const currentZoom = pz ? pz.getTransform().scale : 1
+    const currentZoom = pz && pz() ? pz().getTransform().scale : 1
     resizeStart.scale = initialScale.value * currentZoom
 
     resizeStart.origX = overlayX.value
@@ -163,7 +166,57 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     resizing = false
     window.removeEventListener('mousemove', onResize)
     window.removeEventListener('mouseup', stopResize)
-    if (pz) pz.resume()
+    if (pz && pz()) pz().resume()
+  }
+
+  function startDrag(e) {
+    dragging = true
+
+    if (pz && pz()) {
+      pz().pause()
+    }
+
+    const currentZoom = pz && pz() ? pz().getTransform().scale : 1
+    dragStart.scale = initialScale.value * currentZoom
+
+    const rect = panCont.value.getBoundingClientRect()
+    dragStart.startX = e.clientX
+    dragStart.startY = e.clientY
+    dragStart.origX = overlayX.value
+    dragStart.origY = overlayY.value
+
+    window.addEventListener('mousemove', onDrag)
+    window.addEventListener('mouseup', stopDrag)
+  }
+
+  function onDrag(e) {
+    if (!dragging) {
+      return
+    }
+
+    const dx = (e.clientX - dragStart.startX) / dragStart.scale
+    const dy = (e.clientY - dragStart.startY) / dragStart.scale
+
+    const MAXW = maxW.value || 1
+    const MAXH = maxH.value || 1
+
+    let newX = dragStart.origX + dx
+    let newY = dragStart.origY + dy
+
+    newX = Math.max(0, Math.min(newX, MAXW - overlayW.value))
+    newY = Math.max(0, Math.min(newY, MAXH - overlayH.value))
+
+    overlayX.value = Math.round(newX)
+    overlayY.value = Math.round(newY)
+
+    emit('update:overlay', { width: overlayW.value, height: overlayH.value, x: overlayX.value, y: overlayY.value })
+  }
+
+  function stopDrag() {
+    dragging = false
+    window.removeEventListener('mousemove', onDrag)
+    window.removeEventListener('mouseup', stopDrag)
+    if (pz && pz()) pz().resume()
   }
 
   return {
@@ -180,5 +233,6 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     toggleOverlayVisibility,
     overlayBoxPdfCoords,
     startResize,
+    startDrag,
   }
 }

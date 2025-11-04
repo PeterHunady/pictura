@@ -49,6 +49,7 @@
           v-if="overlayW && overlayH && overlayVisible"
           class="crop-overlay"
           :style="overlayStyle"
+          @mousedown="startDrag"
         >
           <div
             v-for="dir in dirs"
@@ -161,10 +162,8 @@
 
 <script setup>
   import { ref, nextTick, computed, onMounted, onUnmounted, watch } from 'vue'
-  import panzoom from 'panzoom'
   import * as pdfjsLib from 'pdfjs-dist'
   import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
-  import { PDFDocument } from 'pdf-lib'
 
   import { useCalibration } from '../composables/useCalibration'
   import { useBackground } from '../composables/useBackground'
@@ -178,12 +177,7 @@
 
   import {
     canvasHasAlpha,
-    hasAlphaImage,
-    canvasToBlob,
-    dataURLtoU8,
-    extOf,
-    hexToRgb,
-    rgbToHex
+    hasAlphaImage
   } from '../utils/imageProcessing'
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
@@ -199,7 +193,6 @@
   const panCont = ref(null)
   const fileInput = ref(null)
   const markCanvas = ref(null)
-  let pz = null
 
   const currentPage = ref(1)
   const totalPages = ref(1)
@@ -209,7 +202,6 @@
   const referenceWidthMm = ref(210)
   const basePixelWidth = ref(0)
   const screenDPI = ref(96)
-  const updatingScaleProgrammatically = ref(false)
 
   const maxW = computed(() => isPdf.value ? (pdfCanvas.value?.width  || 1) : (imgEl.value?.naturalWidth  || 1))
   const maxH = computed(() => isPdf.value ? (pdfCanvas.value?.height || 1) : (imgEl.value?.naturalHeight || 1))
@@ -227,21 +219,10 @@
   const checkerOn = ref(false)
   const hasAlpha = ref(false)
 
-  let matteKey = null
-  let matteDataURL = null
-
   const originalFileType = ref('')
-  const history = []
-  const origSnapshot = ref(null)
-  const MAX_HISTORY = 30
-  const PZ_MIN_ZOOM = 0.2
-  const PZ_MAX_ZOOM = 20
 
   const minScalePct = ref(0)
   const maxScalePct = ref(0)
-
-  const absMinScale = ref(null)
-  const absMaxScale = ref(null)
 
   const highlightOn = ref(false)
 
@@ -309,7 +290,8 @@
     hideOverlay,
     toggleOverlayVisibility,
     overlayBoxPdfCoords,
-    startResize
+    startResize,
+    startDrag
   } = overlayComposable
 
   const overlayX = overlayXComp
@@ -642,8 +624,7 @@
           emit('update:bgcolor', null)
         }
 
-        origSnapshot.value = makeSnapshot()
-        history.length = 0
+        saveOriginalSnapshot()
       }
     }
     reader.readAsDataURL(file)
@@ -667,8 +648,7 @@
 
     await nextTick()
     await renderPdfPage(1)
-    origSnapshot.value = makeSnapshot()
-    history.length = 0
+    saveOriginalSnapshot()
   }
 
   async function renderPdfPage(pageNo = currentPage.value || 1, dpi = PDF_PREVIEW_DPI) {
@@ -757,10 +737,7 @@
     totalPages.value = 1
     suppressGalleryOnce.value = false
 
-    if (pz) {
-      pz.dispose()
-      pz = null
-    }
+    disposePanzoom()
 
     panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'' })
     initialScale.value = 1

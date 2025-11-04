@@ -1,5 +1,5 @@
 // analytics.js
-const ENDPOINT = "https://visiontrainings.endora.site/collect";
+const ENDPOINT = "https://visiontrainings.endora.site/collect/";
 
 let state = {
   sessionId: null,
