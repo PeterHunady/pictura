@@ -286,7 +286,7 @@
     function onHighlightArtifacts(color = '#00E5FF') {
         const params = { diffThresh: 8, lowEdge: 25, highEdge: 100, dilate: 3 }
         dropRef.value?.highlightJpegArtifacts(color, params)
-        recordAction('highlight_artifacts', { color, ...params })
+        recordAction('highlight_artifacts')
     }
 
     function onApplyBgColor(color) {
