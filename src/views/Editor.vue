@@ -102,8 +102,18 @@
     const sourceSig = ref(null)
     const isCalibrated = computed(() => calibrationBaseCssDpi.value != null)
 
+    function inferFormat(meta) {
+        const name = (meta?.name || '').toLowerCase()
+        const type = (meta?.type || '').toLowerCase()
+        if (name.endsWith('.jpg') || name.endsWith('.jpeg') || type.includes('jpeg') || type.includes('jpg')) return 'jpg'
+        if (name.endsWith('.png') || type.includes('png')) return 'png'
+        if (name.endsWith('.pdf') || type.includes('pdf')) return 'pdf'
+        return 'png'
+    }
+
     onMounted(() => {
         if (typeof window === 'undefined') return
+        analytics.bindUnloadOnce?.()
         const saved = parseFloat(localStorage.getItem('imageDrop.cssBaseDpi'))
         if (Number.isFinite(saved) && saved > 20 && saved < 2000) {
             calibrationBaseCssDpi.value = saved
@@ -119,29 +129,6 @@
 
     const initialDoc = ref(null)
     const actionsPerformed = ref([])
-
-    function normalizeFmt(fmt) {
-        const f = (fmt || '').toLowerCase();
-        if (f === 'jpeg') return 'jpg';
-        return f || 'png';
-    }
-
-    function inferFmtFromMeta(meta) {
-        if (!meta) return 'png';
-        
-        const name = (meta.name || '').toLowerCase();
-        const type = (meta.type || '').toLowerCase();
-
-        if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
-        if (name.endsWith('.png')) return 'png';
-        if (name.endsWith('.pdf')) return 'pdf';
-
-        if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
-        if (type.includes('png')) return 'png';
-        if (type.includes('pdf')) return 'pdf';
-
-        return
-    }
 
     function recordAction(name, data) {
         actionsPerformed.value.push({ t: name, ...(data || {}) })
@@ -193,21 +180,17 @@
     let exportTimer = null
 
     async function onRequestExportPreview({ name, format }) {
-        const prev = lastExportFormat.value
-        if (format && format !== prev) {
-            recordAction('export_format_change', { from: prev, to: format })
+        if (format && format !== lastExportFormat.value) {
+            analytics.setExportFormat?.(format)
             lastExportFormat.value = format
         }
-
-
-        if (format) lastExportFormat.value = format
         exportLoading.value = true
         try {
             const res = await dropRef.value?.estimateExport({ format: lastExportFormat.value })
             exportPreviewBytes.value = res?.sizeBytes ?? null
         } finally {
             exportLoading.value = false
-    }
+        }
     }
 
     async function recalcExportPreview() {
@@ -235,7 +218,7 @@
     async function onExport({ name, format }) {
         const finalFormat = format || lastExportFormat.value || 'png'
 
-        const res = await dropRef.value?.estimateExport({ format })
+        const res = await dropRef.value?.estimateExport({ format: finalFormat })
         if (!res?.blob) return
 
         recordAction('export', {
@@ -245,7 +228,7 @@
 
         if (!analytics.hasActive?.()) analytics.startSession()
 
-        const ext = res.ext || format || 'png'
+        const ext = res.ext || finalFormat || 'png'
         const a = document.createElement('a')
         a.href = URL.createObjectURL(res.blob)
         a.download = `${(name || 'export').trim()}.${ext}`
@@ -326,6 +309,9 @@
             if (!analytics.hasActive?.()) analytics.startSession()
             exportName.value = meta?.name || 'export'
             exportType.value = meta?.type || ''
+            const fmt = inferFormat(meta)
+            lastExportFormat.value = fmt
+            analytics.setSourceFormat?.(fmt)
 
             initialDoc.value = {
             name: meta?.name, type: meta?.type, size: meta?.size,
@@ -334,13 +320,7 @@
             }
         }
 
-        if (
-            meta?.type === 'application/pdf' &&
-            (meta.pages || 1) > 1 &&
-            meta.page === 1 &&
-            meta.docSig !== lastDocSig.value &&
-            !meta.noGallery
-        ) {
+        if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastDocSig.value && !meta.noGallery) {
             const sg = meta.docSig || `${meta.name}|${meta.size}|${meta.lastModified}`
             if (sg !== lastDocSig.value) {
             lastDocSig.value = sg
@@ -422,6 +402,7 @@
             minScale.value = Math.max(0.01, minDisplayScale)
             maxScale.value = Math.max(minScale.value, maxDisplayScale)
         }
+
         if (imageMeta.value) showScale.value = true
     }
 
@@ -433,7 +414,6 @@
         dropRef.value?.setReferenceWidth?.(newWidthMm)
     }
 </script>
-
 
 <style>
     html, body, #app {

@@ -1,12 +1,12 @@
-// analytics.js
 const ENDPOINT = "https://visiontrainings.endora.site/collect/";
 
 let state = {
   sessionId: null,
   closed: false,
-  startedAt: null,
   actions: [],
   boundUnload: false,
+  currentFormat: "png",
+  sourceFormat: "png",
 };
 
 function uuidv4() {
@@ -18,21 +18,19 @@ function uuidv4() {
   });
 }
 
+function normalizeFmt(fmt) {
+  const f = String(fmt || "").trim().toLowerCase();
+  if (f === "jpeg") return "jpg";
+  if (f === "jpg" || f === "png" || f === "pdf") return f;
+  return "png";
+}
+
 function postPayload(payload) {
   if (!ENDPOINT) return false;
-
-  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
-
-  if (navigator.sendBeacon) {
-    return navigator.sendBeacon(ENDPOINT, blob);
-  }
-
-  fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-    keepalive: true,
-  }).catch(() => {});
+  const json = JSON.stringify(payload);
+  const blob = new Blob([json], { type: "application/json" });
+  if (navigator.sendBeacon) return navigator.sendBeacon(ENDPOINT, blob);
+  fetch(ENDPOINT, { method: "POST", headers: { "Content-Type": "application/json" }, body: json, keepalive: true }).catch(() => {});
   return true;
 }
 
@@ -43,46 +41,40 @@ export function startSession() {
   if (isActive()) return state.sessionId;
   state.sessionId = uuidv4();
   state.closed = false;
-  state.startedAt = Date.now();
   state.actions = [];
   return state.sessionId;
 }
 
-// ← TOTO si chcel: logovanie akcií počas editácie
 export function log(name, data = {}) {
   if (!isActive()) startSession();
-  state.actions.push({
-    t: name,
-    ts: Date.now(),
-    ...data,
-  });
+  state.actions.push({ t: name, ts: Date.now(), ...data });
+}
+
+export function setSourceFormat(fmt) {
+  const f = normalizeFmt(fmt);
+  state.sourceFormat = f;
+  state.currentFormat = f;
+}
+
+export function setExportFormat(fmt) {
+  const to = normalizeFmt(fmt);
+  const from = normalizeFmt(state.currentFormat);
+  if (to !== from) {
+    log("export_format_change", { from, to });
+    state.currentFormat = to;
+  }
 }
 
 export function endSession(extra = {}) {
   if (!isActive()) return false;
-
-  const actions = [
-    ...state.actions,
-    ...(Array.isArray(extra.actions) ? extra.actions : []),
-  ];
-
-  const payload = {
-    session_id: state.sessionId,
-    started_at: state.startedAt,
-    ended_at: Date.now(),
-    actions,
-    // voliteľné doplnky od teba
-    ...('meta' in extra ? { meta: extra.meta } : {}),
-  };
-
+  const actions = [...state.actions, ...(Array.isArray(extra.actions) ? extra.actions : [])];
+  const payload = { session_id: state.sessionId, actions };
   const ok = postPayload(payload);
-
-  // uzavri lokálny stav
   state.closed = true;
   state.sessionId = null;
-  state.startedAt = null;
   state.actions = [];
-
+  state.currentFormat = "png";
+  state.sourceFormat = "png";
   return ok;
 }
 
@@ -91,18 +83,11 @@ export function endIfActive(extra = {}) {
   return false;
 }
 
-// poisti sa, že pri zavretí tabu sa odošle session
 export function bindUnloadOnce() {
   if (state.boundUnload) return;
   state.boundUnload = true;
-
-  const handler = () => {
-    try { endIfActive(); } catch {}
-  };
-
-  window.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") handler();
-  });
+  const handler = () => { try { endIfActive(); } catch {} };
+  window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") handler(); });
   window.addEventListener("pagehide", handler);
   window.addEventListener("beforeunload", handler);
 }
