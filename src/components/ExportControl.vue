@@ -6,27 +6,31 @@
     </button>
 
     <div v-show="!collapsed" class="export-panel">
-      <div class="row">
-        <label for="exp-name">File name</label>
-        <input id="exp-name" type="text" v-model.trim="name" />
+      <div v-if="suggestedName">
+        <div class="row">
+          <label for="exp-name">File name</label>
+          <input id="exp-name" type="text" v-model.trim="name" />
+        </div>
+
+        <div class="row">
+          <label for="exp-format">Format</label>
+          <select id="exp-format" v-model="format">
+            <option value="pdf">PDF</option>
+            <option value="png">PNG</option>
+            <option value="jpg">JPG</option>
+          </select>
+        </div>
+
+        <div class="hint">
+          <span>Estimated size:</span>
+          <strong v-if="loading">…</strong>
+          <strong v-else>{{ prettySize }}</strong>
+        </div>
+
+        <button class="save-btn" :disabled="!name" @click="onSave">Save</button>
       </div>
 
-      <div class="row">
-        <label for="exp-format">Format</label>
-        <select id="exp-format" v-model="format">
-          <option value="pdf">PDF</option>
-          <option value="png">PNG</option>
-          <option value="jpg">JPG</option>
-        </select>
-      </div>
-
-      <div class="hint">
-        <span>Estimated size:</span>
-        <strong v-if="loading">…</strong>
-        <strong v-else>{{ prettySize }}</strong>
-      </div>
-
-      <button class="save-btn" :disabled="!name" @click="onSave">Save</button>
+      <p v-else class="no-image">No image loaded.</p>
     </div>
   </div>
 </template>
@@ -215,5 +219,11 @@
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
     border-top: 8px solid #333;
+  }
+
+  .no-image {
+    padding: 0.5rem;
+    font-style: italic;
+    color: #666;
   }
 </style>

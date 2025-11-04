@@ -6,25 +6,33 @@
     </button>
 
     <div v-show="open" class="panel">
-        <label class="row">
-            <span>Intensity</span>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              step="1"
-              v-model.number="intensity"
-            />
-            <span class="value">{{ intensity }}%</span>
-        </label>
+        <div v-if="meta">
+          <label class="row">
+              <span>Intensity</span>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                v-model.number="intensity"
+              />
+              <span class="value">{{ intensity }}%</span>
+          </label>
 
-        <button class="apply-btn" @click="apply">Apply</button>
+          <button class="apply-btn" @click="apply">Apply</button>
+        </div>
+
+        <p v-else class="no-image">No image loaded.</p>
     </div>
   </div>
 </template>
 
 <script setup>
   import { ref, watch, onBeforeUnmount } from 'vue'
+
+  defineProps({
+    meta: Object
+  })
 
   const open = ref(false)
   const intensity = ref(0)
@@ -136,5 +144,12 @@
     border-radius: 4px;
     cursor: pointer;
     font-weight: 600;
+    margin-top: 1rem;
+  }
+
+  .no-image {
+    padding: 0.5rem;
+    font-style: italic;
+    color: #666;
   }
 </style>

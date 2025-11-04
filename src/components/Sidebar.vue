@@ -8,6 +8,7 @@
       <Metadata :meta="meta" />
 
       <FixArtifactsBtn
+        :meta="meta"
         @fix-artifacts="emit('fix-artifacts')"
         @highlight-artifacts="emit('highlight-artifacts', $event)"
       />
@@ -21,13 +22,14 @@
       />
 
       <GrayscaleControl
+        :meta="meta"
         @apply-grayscale="emit('apply-grayscale', $event)"
         @preview="emit('preview-grayscale', $event)"
         @end-preview="emit('end-preview-grayscale')"
       />
 
       <BackgroundColorControl
-        v-if="meta"
+        :meta="meta"
         :initialColor="initialColor"
         @apply-color="emit('apply-color', $event)"
         @preview-color="emit('preview-color', $event)"

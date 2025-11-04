@@ -6,44 +6,48 @@
     </button>
 
     <div v-show="!collapsed" class="control-panel">
-      <div class="field">
-        <label for="bg-color-input">Hex Color</label>
+      <div v-if="meta">
+        <div class="field">
+          <label for="bg-color-input">Hex Color</label>
 
-        <input
-          id="bg-color-input"
-          type="text"
-          :value="bgTransparent ? 'transparent' : color"
-          @input="onColorInput"
-          :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
-        />
+          <input
+            id="bg-color-input"
+            type="text"
+            :value="bgTransparent ? 'transparent' : color"
+            @input="onColorInput"
+            :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
+          />
 
-        <div
-          class="color-box"
-          :style="{ backgroundColor: normalizedColor ?? '#ffffff' }"
-          @click="openPicker">
+          <div
+            class="color-box"
+            :style="{ backgroundColor: normalizedColor ?? '#ffffff' }"
+            @click="openPicker">
+          </div>
+
+          <input
+            ref="picker"
+            type="color"
+            v-model="color"
+            class="native-picker"
+          />
         </div>
 
-        <input
-          ref="picker"
-          type="color"
-          v-model="color"
-          class="native-picker"
-        />
+        <div class="btn-row">
+          <button class="apply-btn" @click="applyColor">
+            Apply
+          </button>
+
+          <button
+            class="remove-btn"
+            @click="removeBackground"
+            :disabled="bgTransparent"
+          >
+            Remove Background
+          </button>
+        </div>
       </div>
 
-      <div class="btn-row">
-        <button class="apply-btn" @click="applyColor">
-          Apply
-        </button>
-
-        <button 
-          class="remove-btn"
-          @click="removeBackground"
-          :disabled="bgTransparent"
-        >
-          Remove Background
-        </button>
-      </div>
+      <p v-else class="no-image">No image loaded.</p>
     </div>
   </div>
 </template>
@@ -53,7 +57,8 @@
 
   const props = defineProps({
     initialColor: { type: String, default: '#ffffff' },
-    bgTransparent: { type: Boolean, default: false }
+    bgTransparent: { type: Boolean, default: false },
+    meta: Object
   })
 
   const emit = defineEmits(['apply-color', 'preview-color', 'end-preview-color', 'remove-background'])
@@ -243,5 +248,11 @@
     font-weight: 600;
     border-radius: 4px;
     cursor: pointer;
+  }
+
+  .no-image {
+    padding: 0.5rem;
+    font-style: italic;
+    color: #666;
   }
 </style>

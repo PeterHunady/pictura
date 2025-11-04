@@ -28,6 +28,8 @@
         </div>
 
       </div>
+
+      <p v-else class="no-image">No image loaded.</p>
     </div>
   </div>
 </template>
@@ -172,5 +174,11 @@
   .apply-btn {
     background: #28a745;
     color: #fff;
+  }
+
+  .no-image {
+    padding: 0.5rem;
+    font-style: italic;
+    color: #666;
   }
 </style>

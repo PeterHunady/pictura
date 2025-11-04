@@ -6,28 +6,36 @@
     </button>
 
     <div v-show="!collapsed" class="enhance-list">
-      <button
-        class="highlight-btn"
-        @click="$emit('highlight-artifacts', '#00E5FF')"
-        title="Highlight JPEG Artifacts"
-        aria-label="Highlight JPEG Artifacts"
-      >
-        Highlight JPEG Artifacts
-      </button>
+      <template v-if="meta">
+        <button
+          class="highlight-btn"
+          @click="$emit('highlight-artifacts', '#00E5FF')"
+          title="Highlight JPEG Artifacts"
+          aria-label="Highlight JPEG Artifacts"
+        >
+          Highlight JPEG Artifacts
+        </button>
 
-      <button
-        class="crop-btn"
-        @click="$emit('fix-artifacts')"
-        title="Remove JPEG Artifacts"
-      >
-        Remove JPEG Artifacts
-      </button>
+        <button
+          class="crop-btn"
+          @click="$emit('fix-artifacts')"
+          title="Remove JPEG Artifacts"
+        >
+          Remove JPEG Artifacts
+        </button>
+      </template>
+
+      <p v-else class="no-image">No image loaded.</p>
     </div>
   </div>
 </template>
 
 <script setup>
   import { ref } from 'vue'
+
+  defineProps({
+    meta: Object
+  })
 
   const collapsed = ref(true)
 
@@ -106,5 +114,11 @@
 
   .highlight-btn:hover {
     background: #e6e6e6;
+  }
+
+  .no-image {
+    padding: 0.5rem;
+    font-style: italic;
+    color: #666;
   }
 </style>
