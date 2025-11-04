@@ -49,7 +49,6 @@
           v-if="overlayW && overlayH && overlayVisible"
           class="crop-overlay"
           :style="overlayStyle"
-          @mousedown="startDrag"
         >
           <div
             v-for="dir in dirs"
@@ -855,6 +854,7 @@
     height: 100%;
     object-fit: contain;
     user-select: none;
+    pointer-events: auto;
   }
 
   .preview-canvas{
@@ -890,7 +890,7 @@
     position: absolute;
     box-sizing: border-box;
     border: 2px dashed #ff3b30;
-    pointer-events: all;
+    pointer-events: none;
     will-change: transform, width, height, left, top;
     z-index: 5;
     user-select: none;
@@ -900,12 +900,13 @@
   .crop-overlay .handle {
     position: absolute;
     width: 10px;
-    height: 10px;       
+    height: 10px;
     background: #fff;
     border: 1px solid #ff3b30;
     box-sizing: border-box;
     z-index: 10;
     touch-action: none;
+    pointer-events: all;
   }
 
   .crop-overlay .nw {

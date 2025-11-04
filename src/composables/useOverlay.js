@@ -26,7 +26,7 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
       height: `${overlayH.value * s}px`,
       border: '2px dashed #ff3b30',
       boxSizing: 'border-box',
-      pointerEvents: 'all',
+      pointerEvents: 'none',
       zIndex: 5,
     }
   })
