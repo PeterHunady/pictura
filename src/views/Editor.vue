@@ -125,9 +125,10 @@
         if (f === 'jpeg') return 'jpg';
         return f || 'png';
     }
-    
+
     function inferFmtFromMeta(meta) {
         if (!meta) return 'png';
+        
         const name = (meta.name || '').toLowerCase();
         const type = (meta.type || '').toLowerCase();
 
