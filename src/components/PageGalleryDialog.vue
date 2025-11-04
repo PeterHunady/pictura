@@ -48,7 +48,6 @@
     })
 
     const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
-
     const localSel = ref(props.modelValue || 1)
     watch(() => props.modelValue, v => { localSel.value = v || 1 })
     watch(localSel, v => emit('update:modelValue', v))
