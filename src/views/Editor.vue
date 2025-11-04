@@ -120,6 +120,28 @@
     const initialDoc = ref(null)
     const actionsPerformed = ref([])
 
+    function normalizeFmt(fmt) {
+        const f = (fmt || '').toLowerCase();
+        if (f === 'jpeg') return 'jpg';
+        return f || 'png';
+    }
+    
+    function inferFmtFromMeta(meta) {
+        if (!meta) return 'png';
+        const name = (meta.name || '').toLowerCase();
+        const type = (meta.type || '').toLowerCase();
+
+        if (name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'jpg';
+        if (name.endsWith('.png')) return 'png';
+        if (name.endsWith('.pdf')) return 'pdf';
+
+        if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
+        if (type.includes('png')) return 'png';
+        if (type.includes('pdf')) return 'pdf';
+
+        return
+    }
+
     function recordAction(name, data) {
         actionsPerformed.value.push({ t: name, ...(data || {}) })
     }
