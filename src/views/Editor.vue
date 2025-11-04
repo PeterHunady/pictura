@@ -195,9 +195,7 @@
         exportLoading.value = true
 
         try {
-            const { sizeBytes } = (await dropRef.value.estimateExport({
-            format: lastExportFormat.value || 'png'
-            })) || {}
+            const { sizeBytes } = (await dropRef.value.estimateExport({format: lastExportFormat.value || 'png'})) || {}
             exportPreviewBytes.value = sizeBytes ?? null
         } finally {
             exportLoading.value = false
