@@ -66,10 +66,18 @@ export function setExportFormat(fmt) {
 }
 
 export function endSession(extra = {}) {
-  if (!isActive()) return false;
+  if (!isActive()) {
+    console.warn('[Analytics] endSession called but no active session');
+    return false;
+  }
   const actions = [...state.actions, ...(Array.isArray(extra.actions) ? extra.actions : [])];
 
+  console.log('[Analytics] endSession - state.actions:', state.actions);
+  console.log('[Analytics] endSession - extra.actions:', extra.actions);
+  console.log('[Analytics] endSession - combined actions:', actions);
+
   if (actions.length === 0) {
+    console.warn('[Analytics] No actions to send, skipping payload');
     state.closed = true;
     state.sessionId = null;
     state.actions = [];
@@ -79,7 +87,9 @@ export function endSession(extra = {}) {
   }
 
   const payload = { session_id: state.sessionId, actions };
+  console.log('[Analytics] Sending payload:', payload);
   const ok = postPayload(payload);
+  console.log('[Analytics] Payload sent, result:', ok);
   state.closed = true;
   state.sessionId = null;
   state.actions = [];
@@ -97,7 +107,6 @@ export function bindUnloadOnce() {
   if (state.boundUnload) return;
   state.boundUnload = true;
   const handler = () => { try { endIfActive(); } catch {} };
-  window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") handler(); });
   window.addEventListener("pagehide", handler);
   window.addEventListener("beforeunload", handler);
 }
