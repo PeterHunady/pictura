@@ -4,19 +4,19 @@
       <img :src="defaultLogo" alt="Logo" class="logo" />
 
       <div v-if="showScale" class="scale-control" ref="scaleControlRef">
-        <div class="scale-wrapper">
-          <button class="scale-btn" @click="decrementScale">−</button>
+        <div class="scale-wrapper" @click="toggleDropdown">
+          <button class="scale-btn" @click.stop="decrementScale">−</button>
           <input
             type="number"
             v-model.number="localScale"
             @change="onScaleChange"
             @keyup.enter="onScaleChange"
+            @click.stop
             class="scale-input"
             step="1"
           />
           <span class="scale-unit">%</span>
-          <button class="scale-btn" @click="incrementScale">+</button>
-          <button class="dropdown-btn" @click="toggleDropdown">↓</button>
+          <button class="scale-btn" @click.stop="incrementScale">+</button>
           <span
             v-if="!isCalibrated"
             class="warn-wrap"
@@ -259,6 +259,7 @@
     border: 1px solid #ddd;
     border-radius: 6px;
     padding: 0.25rem 0.5rem;
+    cursor: pointer;
   }
 
   .scale-btn, .dropdown-btn {

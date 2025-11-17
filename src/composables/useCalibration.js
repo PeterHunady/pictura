@@ -227,5 +227,6 @@ export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayS
     measureCssDpi1in,
     initCalibration,
     detachCalibrationListeners,
+    getPageZoomSafe,
   }
 }

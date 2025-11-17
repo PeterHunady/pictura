@@ -26,6 +26,14 @@ export function usePanzoom({
   const absMinScale = ref(null)
   const absMaxScale = ref(null)
 
+  const lastPointer = { x: null, y: null }
+  let pointerListenersAttached = false
+
+  function rememberPointer(e) {
+    lastPointer.x = e.clientX
+    lastPointer.y = e.clientY
+  }
+
   function getDisplayScaleBounds() {
     const natW = basePixelWidth.value || 1
     const referenceWidthCssPx = (referenceWidthMm.value / 25.4) * screenDPI.value
@@ -65,22 +73,42 @@ export function usePanzoom({
   function setDisplayScale(newScale) {
     if (!pz || !basePixelWidth.value) return
 
-    const targetPct = Math.max(minScalePct.value, Math.min(maxScalePct.value, Number(newScale) || 0))
+    const targetPct = Math.max(
+      minScalePct.value,
+      Math.min(maxScalePct.value, Number(newScale) || 0)
+    )
 
     const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value
     const targetScreenWidthPx = (targetPct / 100) * referenceWidthPx
 
     const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
+    const currentTransform = pz.getTransform()
+    const currentUserScale = currentTransform.scale || 1
+
     let targetUserScale = targetAbsoluteScale / (initialScale.value || 1)
 
-    targetUserScale = Math.max(PZ_MIN_ZOOM, Math.min(PZ_MAX_ZOOM, targetUserScale))
+    const minUserZoom = pz.getMinZoom ? pz.getMinZoom() : PZ_MIN_ZOOM
+    const maxUserZoom = pz.getMaxZoom ? pz.getMaxZoom() : PZ_MAX_ZOOM
+    targetUserScale = Math.max(minUserZoom, Math.min(maxUserZoom, targetUserScale))
+
+    const factor = targetUserScale / currentUserScale
+    if (!isFinite(factor) || Math.abs(factor - 1) < 1e-4) {
+      return
+    }
 
     const wrap = previewWrap.value
-    const wrapRect = wrap.getBoundingClientRect()
-    const cx = wrapRect.left + wrapRect.width / 2
-    const cy = wrapRect.top + wrapRect.height / 2
+    if (!wrap) return
 
-    pz.zoomAbs(cx, cy, targetUserScale)
+    const wrapRect = wrap.getBoundingClientRect()
+    let cx = wrapRect.left + wrapRect.width / 2
+    let cy = wrapRect.top + wrapRect.height / 2
+
+    if (lastPointer.x != null && lastPointer.y != null) {
+      cx = lastPointer.x
+      cy = lastPointer.y
+    }
+
+    pz.zoomTo(cx, cy, factor)
 
     nextTick(() => updateDisplayScale())
   }
@@ -102,6 +130,41 @@ export function usePanzoom({
     const natH = isPdf.value ? elem.height : elem.naturalHeight
 
     const wrap = previewWrap.value
+
+    if (wrap && !pointerListenersAttached) {
+      wrap.addEventListener('mousemove', rememberPointer)
+      wrap.addEventListener('mousedown', rememberPointer)
+
+      wrap.addEventListener(
+        'touchstart',
+        (ev) => {
+          const t = ev.touches && ev.touches[0]
+          if (t) rememberPointer(t)
+        },
+        { passive: true }
+      )
+
+      wrap.addEventListener(
+        'wheel',
+        (ev) => {
+          rememberPointer(ev)
+
+          if (ev.ctrlKey || ev.metaKey) {
+            return
+          }
+
+          ev.preventDefault()
+          const scrollSpeed = 0.5
+          if (pz) {
+            pz.moveBy(0, -ev.deltaY * scrollSpeed)
+          }
+        },
+        { passive: false }
+      )
+
+      pointerListenersAttached = true
+    }
+
     const scaleW = Math.floor(wrap.clientWidth) / natW
     const scaleH = Math.floor(wrap.clientHeight) / natH
     initialScale.value = Math.min(scaleW, scaleH)
@@ -121,11 +184,23 @@ export function usePanzoom({
       minZoom: absMinScale.value / initialScale.value,
       maxZoom: absMaxScale.value / initialScale.value,
       bounds: false,
-      boundsPadding: 0.1
+      boundsPadding: 0.1,
+      beforeWheel: function (e) {
+        const isZoomGesture = e.ctrlKey || e.metaKey
+        return !isZoomGesture
+      },
     })
 
     pz.on('zoom', updateDisplayScale)
     pz.on('pan', updateDisplayScale)
+
+    if (wrap) {
+      const contW = natW * initialScale.value
+      const contH = natH * initialScale.value
+      const offsetX = (wrap.clientWidth - contW) / 2
+      const offsetY = (wrap.clientHeight - contH) / 2
+      pz.moveTo(offsetX, offsetY)
+    }
 
     markCanvas.value.width = natW
     markCanvas.value.height = natH
@@ -183,6 +258,10 @@ export function usePanzoom({
       maxZoom: PZ_MAX_ZOOM,
       bounds: false,
       boundsPadding: 0.1,
+      beforeWheel: function (e) {
+        const isZoomGesture = e.ctrlKey || e.metaKey
+        return !isZoomGesture
+      },
     })
 
     pz.on('zoom', updateDisplayScale)

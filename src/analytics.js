@@ -68,6 +68,16 @@ export function setExportFormat(fmt) {
 export function endSession(extra = {}) {
   if (!isActive()) return false;
   const actions = [...state.actions, ...(Array.isArray(extra.actions) ? extra.actions : [])];
+
+  if (actions.length === 0) {
+    state.closed = true;
+    state.sessionId = null;
+    state.actions = [];
+    state.currentFormat = "png";
+    state.sourceFormat = "png";
+    return false;
+  }
+
   const payload = { session_id: state.sessionId, actions };
   const ok = postPayload(payload);
   state.closed = true;

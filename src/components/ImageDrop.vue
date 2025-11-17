@@ -74,24 +74,9 @@
       <div class="calib-modal">
         <h3>Screen Calibration</h3>
 
-        <!-- Mode Selector -->
-        <div class="calib-mode-selector">
-          <button
-            :class="{ active: calibrationMode === 'line' }"
-            @click="calibrationMode = 'line'"
-          >
-            Ruler Method
-          </button>
-          <button
-            :class="{ active: calibrationMode === 'card' }"
-            @click="calibrationMode = 'card'"
-          >
-            Credit Card Method
-          </button>
-        </div>
-
         <!-- Line Calibration -->
-        <div v-if="calibrationMode === 'line'" class="calib-method">
+        <div class="calib-method">
+          <h4>Ruler Method</h4>
           <p>Measure the line below with a ruler and enter its length in millimeters.</p>
 
           <div class="calib-line-wrap">
@@ -101,15 +86,22 @@
           <div class="calib-controls">
             <label>
               Measured length (mm):
-              <input type="number" v-model.number="calMeasuredMm" min="10" max="1000" step="0.1">
+              <input
+                type="number"
+                v-model.number="calMeasuredMm"
+                @change="syncCardFromLine"
+                min="10"
+                max="1000"
+                step="0.1">
             </label>
-            <button class="primary" @click="handleApplyCalibration">Apply</button>
-            <button @click="closeCalibration">Cancel</button>
           </div>
         </div>
 
+        <div class="calib-separator"></div>
+
         <!-- Card Calibration -->
-        <div v-if="calibrationMode === 'card'" class="calib-method">
+        <div class="calib-method">
+          <h4>Credit Card Method</h4>
           <p>Adjust the slider until the card below matches your real credit card size.</p>
           <p class="card-info">Standard card size: 85.6 × 53.98 mm</p>
 
@@ -129,27 +121,29 @@
               <input
                 type="range"
                 v-model.number="cardSliderValue"
+                @input="syncLineFromCard"
                 min="30"
-                max="200"
+                max="120"
                 step="1"
                 class="card-slider"
               />
               <input
                 type="number"
                 v-model.number="cardSliderValue"
+                @change="syncLineFromCard"
                 min="30"
-                max="200"
+                max="120"
                 step="1"
                 class="slider-value-input"
               />
               <span class="percent-sign">%</span>
             </label>
           </div>
+        </div>
 
-          <div class="calib-controls">
-            <button class="primary" @click="handleApplyCardCalibration">Apply</button>
-            <button @click="closeCalibration">Cancel</button>
-          </div>
+        <div class="calib-controls-footer">
+          <button class="primary" @click="handleApplyCalibration">Apply</button>
+          <button class="cancel-btn" @click="closeCalibration">Cancel</button>
         </div>
 
         <p v-if="calError" class="calib-error">{{ calError }}</p>
@@ -208,7 +202,6 @@
   const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor', 'update:scale', 'update:has-alpha'])
 
   const PDF_PREVIEW_DPI = 600;
-  const PDF_RASTER_OPS_DPI = 600;
   const MAX_CANVAS_PIXELS = 25e6;
   const pdfRenderScale = ref(1);
   const previewWrap = ref(null)
@@ -337,8 +330,10 @@
     calibrationMode,
     calMeasuredMm,
     calLineEl,
+    calCssPx,
     cardSliderValue,
     cardImageEl,
+    CARD_WIDTH_MM,
     calError,
     openCalibration,
     closeCalibration,
@@ -346,8 +341,67 @@
     applyCardCalibration,
     clearCalibration,
     initCalibration,
-    detachCalibrationListeners
+    detachCalibrationListeners,
+    getPageZoomSafe,
+    measureCalLinePx
   } = calibrationComposable
+
+  let isSyncing = false
+
+  function syncCardFromLine() {
+    if (isSyncing) return
+
+    measureCalLinePx()
+    const mm = Number(calMeasuredMm.value)
+
+    if (!calCssPx.value || calCssPx.value <= 0 || !mm || mm <= 0) return
+
+    isSyncing = true
+
+    const effectiveCssDpi = (calCssPx.value * 25.4) / mm
+    const targetCardWidthPx = (CARD_WIDTH_MM * effectiveCssDpi) / 25.4
+
+    if (cardImageEl.value && cardImageEl.value.parentElement) {
+      const parent = cardImageEl.value.parentElement
+      const computedStyle = window.getComputedStyle(parent)
+      const paddingLeft = parseFloat(computedStyle.paddingLeft) || 0
+      const paddingRight = parseFloat(computedStyle.paddingRight) || 0
+      const containerWidth = parent.getBoundingClientRect().width - paddingLeft - paddingRight
+
+      if (containerWidth > 0) {
+        const newSliderValue = (targetCardWidthPx / containerWidth) * 100
+        cardSliderValue.value = Math.max(30, Math.min(120, Math.round(newSliderValue)))
+      }
+    }
+
+    nextTick(() => {
+      isSyncing = false
+    })
+  }
+
+  function syncLineFromCard() {
+    if (isSyncing) return
+
+    measureCalLinePx()
+
+    if (!calCssPx.value || calCssPx.value <= 0 || !cardImageEl.value) return
+
+    isSyncing = true
+
+    const cardRect = cardImageEl.value.getBoundingClientRect()
+    const displayedCardWidthPx = cardRect.width
+
+    if (displayedCardWidthPx > 0) {
+      const effectiveCssDpi = (displayedCardWidthPx * 25.4) / CARD_WIDTH_MM
+      const newMeasuredMm = (calCssPx.value * 25.4) / effectiveCssDpi
+
+      calMeasuredMm.value = Math.round(newMeasuredMm * 10) / 10
+    }
+
+    nextTick(() => {
+      isSyncing = false
+    })
+  }
 
   function handleApplyCalibration() {
     applyCalibration(getPanzoom(), basePixelWidth, initialScale, panCont, displayScale)
@@ -508,6 +562,8 @@
     ro = null
     detachCalibrationListeners()
     disposePanzoom()
+
+    document.removeEventListener('paste', handlePaste)
   })
 
   watch(() => props.rightGap, async () => {
@@ -540,6 +596,32 @@
     }
 
     return window.confirm('Replace the current file? Unsaved edits will be lost.')
+  }
+
+  function handlePaste(e) {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+
+        if (!shouldReplace()) {
+          return
+        }
+
+        const blob = item.getAsFile()
+        if (!blob) continue
+
+        const file = new File([blob], `pasted-image-${Date.now()}.png`, { type: blob.type })
+
+        isPdf.value = false
+        loadImage(file)
+        break
+      }
+    }
   }
 
   function handleFileChange(e) {
@@ -767,6 +849,8 @@
 
     ro = new ResizeObserver(() => adjustForContainerResize())
     if (previewWrap.value) ro.observe(previewWrap.value)
+
+    document.addEventListener('paste', handlePaste)
   })
 
   defineExpose({
@@ -806,7 +890,7 @@
     setDisplayScale,
     setReferenceWidth,
 
-    // Ostatné (ostávajú v hlavnom komponente)
+    // Others
     clear,
     download,
     exportFile,
@@ -835,13 +919,13 @@
     width:100%;
     height:100%;
     background: transparent;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    overflow: hidden;
   }
 
   .panzoom-container {
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
     transform-origin: top left;
   }
@@ -971,10 +1055,12 @@
   }
 
   .calib-modal{
-    background: #fff; 
+    background: #fff;
     border-radius: 10px;
     padding: 16px 18px;
     width: min(620px, 90vw);
+    max-height: 90vh;
+    overflow-y: auto;
     box-shadow: 0 10px 30px rgba(0,0,0,.25);
     color: #000;
   }
@@ -989,43 +1075,63 @@
     color: #000;
   }
 
-  .calib-mode-selector {
-    display: flex;
-    gap: 8px;
+  .calib-method {
     margin-bottom: 20px;
   }
 
-  .calib-mode-selector button {
-    flex: 1;
-    padding: 8px 16px;
-    border: 2px solid #ddd;
-    border-radius: 6px;
-    background: #fff;
-    color: #333;
-    cursor: pointer;
-    font-size: 14px;
-    transition: all 0.2s;
-  }
-
-  .calib-mode-selector button:hover {
-    border-color: #28a745;
-    background: #f0f0f0;
-  }
-
-  .calib-mode-selector button.active {
-    border-color: #28a745;
-    background: #28a745;
-    color: #fff;
+  .calib-method h4 {
+    color: #000;
+    margin: 0 0 8px;
+    font-size: 1rem;
     font-weight: 600;
-  }
-
-  .calib-method {
-    margin-top: 16px;
   }
 
   .calib-method p {
     margin: 0 0 12px;
     font-size: 14px;
+  }
+
+  .calib-separator {
+    height: 1px;
+    background: #ddd;
+    margin: 24px 0;
+  }
+
+  .calib-controls-footer {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+  }
+
+  .calib-controls-footer .primary {
+    padding: .4rem .7rem;
+    border: 0;
+    border-radius: 6px;
+    background: #28a745;
+    color: white;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .calib-controls-footer .primary:hover {
+    background: #218838;
+  }
+
+  .cancel-btn {
+    padding: .4rem .8rem;
+    border-radius: 6px;
+    background: #e53935;
+    cursor: pointer;
+    border: none;
+    color: white;
+    font-size: 14px;
+  }
+
+  .cancel-btn:hover {
+    background: #d32f2f;
   }
 
   .card-info {

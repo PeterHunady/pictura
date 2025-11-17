@@ -68,7 +68,6 @@ export function useExport({
       return { blob, sizeBytes: size, ext: format, mime }
     }
 
-    // IMAGE EXPORT (not PDF input)
     const img = imgEl.value
     if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
 
@@ -82,7 +81,6 @@ export function useExport({
     c.width = sw; c.height = sh
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
 
-    // Handle PDF export from PNG/JPG image
     if (format === 'pdf') {
       try {
         const outDoc = await PDFDocument.create()
@@ -232,7 +230,6 @@ export function useExport({
       try {
         const outDoc = await PDFDocument.create()
 
-        // Create a white background canvas with image
         const tempCanvas = document.createElement('canvas')
         tempCanvas.width = w
         tempCanvas.height = h
@@ -241,7 +238,6 @@ export function useExport({
         tempCtx.fillRect(0, 0, w, h)
         tempCtx.drawImage(c, 0, 0)
 
-        // Convert to JPEG
         const jpegBlob = await canvasToBlob(tempCanvas, 'image/jpeg')
         const jpegArrayBuffer = await jpegBlob.arrayBuffer()
         const jpegBytes = new Uint8Array(jpegArrayBuffer)
