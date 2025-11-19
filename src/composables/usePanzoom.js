@@ -100,10 +100,14 @@ export function usePanzoom({
     if (!wrap) return
 
     const wrapRect = wrap.getBoundingClientRect()
+
+    const BIG_JUMP_FACTOR = 2
+    const isBigJump = factor >= BIG_JUMP_FACTOR || factor <= 1 / BIG_JUMP_FACTOR
+
     let cx = wrapRect.left + wrapRect.width / 2
     let cy = wrapRect.top + wrapRect.height / 2
 
-    if (lastPointer.x != null && lastPointer.y != null) {
+    if (!isBigJump && lastPointer.x != null && lastPointer.y != null) {
       cx = lastPointer.x
       cy = lastPointer.y
     }
@@ -112,7 +116,7 @@ export function usePanzoom({
 
     nextTick(() => updateDisplayScale())
   }
-
+  
   function setReferenceWidth(newWidthMm) {
     referenceWidthMm.value = newWidthMm
     recomputeScaleBounds()
