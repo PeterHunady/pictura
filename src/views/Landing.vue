@@ -44,7 +44,7 @@
 </template>
 
 <script setup>
-    import { ref, computed } from 'vue'
+    import { ref, computed, onMounted, onUnmounted } from 'vue'
     import { useRouter } from 'vue-router'
     import TopBar from '@/components/TopBar.vue'
     import { setPendingFile } from '@/composables/usePendingFile'
@@ -80,6 +80,28 @@
     function onDrop(e){
         handleFile(pickFirstValid(e.dataTransfer?.files || []))
     }
+
+    function onPaste(e){
+        const items = e.clipboardData?.items || []
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile()
+                if (file) {
+                    handleFile(file)
+                    e.preventDefault()
+                    break
+                }
+            }
+        }
+    }
+
+    onMounted(() => {
+        document.addEventListener('paste', onPaste)
+    })
+
+    onUnmounted(() => {
+        document.removeEventListener('paste', onPaste)
+    })
 </script>
 
 <style scoped>
