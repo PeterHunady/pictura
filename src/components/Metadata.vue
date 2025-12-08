@@ -57,7 +57,7 @@
         const target = el.scrollHeight
 
         requestAnimationFrame(() => {
-        el.style.transition = 'height O.3s ease, opacity 0.3s ease'
+        el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
         el.style.height = target + 'px'
         el.style.opacity = '1'
         })
@@ -80,79 +80,79 @@
 </script>
 
 <style scoped>
-    .metadata {
-        margin-top: 1rem;
-    }
+  .metadata {
+    margin-top: 1rem;
+  }
 
-    .metadata-toggle {
-        width: 100%;
-        padding: 0.7rem;
-        border: none;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        cursor: pointer;
-    }
+  .metadata-toggle {
+    width: 100%;
+    padding: 0.7rem;
+    border: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+  }
 
-    .metadata-toggle-left {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-    }
+  .metadata-toggle-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
 
-    .toggle-icon {
-        width: 20px;
-        height: 20px;
-        display: block;
-    }
+  .toggle-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
+  }
 
-    .slide-wrapper {
-        overflow: hidden;
-        padding: 1rem 0.75rem;
-    }
+  .slide-wrapper {
+    overflow: hidden;
+  }
 
-    .metadata-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }
+  .metadata-list {
+    list-style: none;
+    margin: 0;
+    padding: 1rem 0.75rem;
+  }
 
-    .metadata-list li {
-        display: flex;
-        margin-bottom: 0.3rem;
-    }
+  .metadata-list li {
+    display: flex;
+    margin-bottom: 0.3rem;
+  }
 
-    .metadata-list li p {
-        font-weight: 500;
-        margin-right: 0.3rem;
-        white-space: nowrap;
-    }
+  .metadata-list li p {
+    font-weight: 500;
+    margin-right: 0.3rem;
+    white-space: nowrap;
+  }
 
-    .no-meta {
-        padding: 0.5rem;
-        font-style: italic;
-        color: #666;
-    }
+  .no-meta {
+    padding: 1rem 0.75rem;
+    font-style: italic;
+    color: #666;
+  }
 
-    .arrow-right, .arrow-down {
-        width: 0;
-        height: 0;
-        display: inline-block;
-        border-top: 5px solid transparent;
-        border-bottom: 5px solid transparent;
-    }
+  .arrow-right,
+  .arrow-down {
+    width: 0;
+    height: 0;
+    display: inline-block;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+  }
 
-    .arrow-right {
-        border-left: 8px solid #333; 
-    }
+  .arrow-right {
+    border-left: 8px solid #333;
+  }
 
-    .arrow-down {
-        border-left: 5px solid transparent;
-        border-right: 5px solid transparent;
-        border-top: 8px solid #333;
-    }
+  .arrow-down {
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 8px solid #333;
+  }
 
-    li {
-        color: black !important;
-    }
+  li {
+    color: black !important;
+  }
 </style>

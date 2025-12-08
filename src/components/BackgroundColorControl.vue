@@ -201,6 +201,34 @@
     }
     emit('end-preview-color')
   })
+
+  const onEnter = (el) => {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+
+    const target = el.scrollHeight
+
+    requestAnimationFrame(() => {
+      el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
+      el.style.height = target + 'px'
+      el.style.opacity = '1'
+    })
+  }
+
+  const onAfterEnter = (el) => {
+    el.style.height = 'auto'
+    el.style.transition = ''
+  }
+
+  const onLeave = (el) => {
+    el.style.height = el.scrollHeight + 'px'
+    el.style.opacity = '1'
+    void el.offsetHeight
+
+    el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
+    el.style.height = '0px'
+    el.style.opacity = '0'
+  }
 </script>
 
 <style scoped>
