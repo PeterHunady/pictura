@@ -285,8 +285,8 @@
   }
 
   .color-box {
-    width: 32px;
-    height: 32px;
+    width: 31px;
+    height: 31px;
     border: 1px solid #ccc;
     border-radius: 4px;
     cursor: pointer;
