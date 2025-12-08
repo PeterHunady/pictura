@@ -96,6 +96,7 @@
     if (m6) return `#${m6[1].toLowerCase()}`
 
     const m3 = s.match(/^#?([0-9a-fA-F]{3})$/)
+    
     if (m3) {
       return (
         '#' +
