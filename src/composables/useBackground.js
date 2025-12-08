@@ -28,25 +28,23 @@ export function useBackground({
   pdfBytes,
   renderPdfPage,
   setHasAlpha,
-  pushHistory
+  pushHistory,
+  currentPage,
 }) {
   const previewImg = ref(null)
   const previewOn = ref(false)
   const previewType = ref(null)
-  let matteKey = null
-  let matteDataURL = null
+  const transparentBase = ref(null)
 
   function getSourceCanvas() {
     if (isPdf.value && pdfCanvas.value?.width) {
       return pdfCanvas.value
     }
+
     const img = imgEl.value
+    if (!img?.naturalWidth) return null
 
-    if (!img?.naturalWidth) {
-      return null
-    }
     const off = document.createElement('canvas')
-
     off.width = img.naturalWidth
     off.height = img.naturalHeight
     off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
@@ -69,7 +67,8 @@ export function useBackground({
       return
     }
 
-    const W = src.width, H = src.height
+    const W = src.width
+    const H = src.height
     if (!W || !H) return
 
     const ctx = src.getContext('2d', { willReadFrequently: true })
@@ -77,35 +76,51 @@ export function useBackground({
     const step = Math.max(1, Math.floor(Math.min(W, H) / 80))
     const A_MIN = 8
 
-    const q = v => (v >> 4)
+    const q = (v) => v >> 4
     const keyOf = (r, g, b) => (q(r) << 8) | (q(g) << 4) | q(b)
     const sums = new Map()
 
     const sampleRow = (y) => {
       const row = ctx.getImageData(0, y, W, 1).data
-
       for (let x = 0; x < W; x += step) {
         const i = x * 4
-        const a = row[i + 3]; if (a <= A_MIN) continue
-        const r = row[i], g = row[i + 1], b = row[i + 2]
+        const a = row[i + 3]
+        if (a <= A_MIN) continue
+        const r = row[i]
+        const g = row[i + 1]
+        const b = row[i + 2]
         const k = keyOf(r, g, b)
         let s = sums.get(k)
-        if (!s) { s = { count: 0, R: 0, G: 0, B: 0 }; sums.set(k, s) }
-        s.count++; s.R += r; s.G += g; s.B += b
+        if (!s) {
+          s = { count: 0, R: 0, G: 0, B: 0 }
+          sums.set(k, s)
+        }
+        s.count++
+        s.R += r
+        s.G += g
+        s.B += b
       }
     }
 
     const sampleCol = (x) => {
       const col = ctx.getImageData(x, 0, 1, H).data
-
       for (let y = 0; y < H; y += step) {
         const i = y * 4
-        const a = col[i + 3]; if (a <= A_MIN) continue
-        const r = col[i], g = col[i + 1], b = col[i + 2]
+        const a = col[i + 3]
+        if (a <= A_MIN) continue
+        const r = col[i]
+        const g = col[i + 1]
+        const b = col[i + 2]
         const k = keyOf(r, g, b)
         let s = sums.get(k)
-        if (!s) { s = { count: 0, R: 0, G: 0, B: 0 }; sums.set(k, s) }
-        s.count++; s.R += r; s.G += g; s.B += b
+        if (!s) {
+          s = { count: 0, R: 0, G: 0, B: 0 }
+          sums.set(k, s)
+        }
+        s.count++
+        s.R += r
+        s.G += g
+        s.B += b
       }
     }
 
@@ -114,12 +129,10 @@ export function useBackground({
     sampleCol(inset)
     sampleCol(Math.max(inset, W - 1 - inset))
 
-    if (sums.size === 0) {
-      return
-    }
+    if (sums.size === 0) return
 
-    let bestKey = null, bestCount = -1
-
+    let bestKey = null
+    let bestCount = -1
     for (const [k, s] of sums.entries()) {
       if (s.count > bestCount) {
         bestCount = s.count
@@ -142,10 +155,11 @@ export function useBackground({
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    const srgbToLinear = v => {
-      v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    const srgbToLinear = (v) => {
+      v /= 255
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
     }
-    const linearToSrgb = v => {
+    const linearToSrgb = (v) => {
       v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055
       return Math.max(0, Math.min(255, Math.round(v * 255)))
     }
@@ -160,13 +174,16 @@ export function useBackground({
       const gL = srgbToLinear(data[i + 1])
       const bL = srgbToLinear(data[i + 2])
 
-      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : (rL >= br ? (rL - br) / (1 - br) : (br - rL) / br)
-      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : (gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg)
-      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : (bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb)
+      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : rL >= br ? (rL - br) / (1 - br) : (br - rL) / br
+      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg
+      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb
+
       let a = Math.max(aR, aG, aB)
       if (tol > 0) a = Math.max(0, Math.min(1, (a - tol) / (1 - tol)))
 
-      let fr = 0, fg = 0, fb = 0
+      let fr = 0
+      let fg = 0
+      let fb = 0
       if (a > 1e-5) {
         fr = (rL - (1 - a) * br) / a
         fg = (gL - (1 - a) * bg) / a
@@ -180,6 +197,100 @@ export function useBackground({
     }
 
     context.putImageData(imageData, 0, 0)
+    return canvas.toDataURL('image/png')
+  }
+
+  function recolorFlatBackground(canvas, bgRGB, newHexColor) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    const { width, height } = canvas
+    const imageData = ctx.getImageData(0, 0, width, height)
+    const data = imageData.data
+
+    const bg = bgRGB || { r: data[0], g: data[1], b: data[2] }
+    const newBg = hexToRgb(newHexColor)
+    if (!newBg) return canvas.toDataURL('image/png')
+
+    const SEED_DIST_SQ = 140
+    const HALO_DIST_SQ = 100000
+    const NEAR_RADIUS = 2
+
+    const seedMask = new Uint8Array(width * height)
+
+    const distSqToBg = (r, g, b) => {
+      const dr = r - bg.r
+      const dg = g - bg.g
+      const db = b - bg.b
+      return dr * dr + dg * dg + db * db
+    }
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4
+        const a = data[idx + 3]
+        if (a === 0) continue
+        const r = data[idx]
+        const g = data[idx + 1]
+        const b = data[idx + 2]
+        if (distSqToBg(r, g, b) <= SEED_DIST_SQ) {
+          seedMask[y * width + x] = 1
+        }
+      }
+    }
+
+    const mix = (c, target, t) => Math.round(c + (target - c) * t)
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pix = y * width + x
+        const idx = pix * 4
+
+        const a = data[idx + 3]
+        if (a === 0) continue
+
+        const r = data[idx]
+        const g = data[idx + 1]
+        const b = data[idx + 2]
+
+        const d2 = distSqToBg(r, g, b)
+
+        if (d2 <= SEED_DIST_SQ) {
+          data[idx] = newBg.r
+          data[idx + 1] = newBg.g
+          data[idx + 2] = newBg.b
+          data[idx + 3] = 255
+          continue
+        }
+
+        if (d2 > HALO_DIST_SQ) {
+          continue
+        }
+
+        let nearSeed = false
+        for (let dy = -NEAR_RADIUS; dy <= NEAR_RADIUS && !nearSeed; dy++) {
+          const ny = y + dy
+          if (ny < 0 || ny >= height) continue
+          for (let dx = -NEAR_RADIUS; dx <= NEAR_RADIUS; dx++) {
+            const nx = x + dx
+            if (nx < 0 || nx >= width) continue
+            if (dx === 0 && dy === 0) continue
+            if (seedMask[ny * width + nx]) {
+              nearSeed = true
+              break
+            }
+          }
+        }
+
+        if (!nearSeed) continue
+
+        const t = (HALO_DIST_SQ - d2) / (HALO_DIST_SQ - SEED_DIST_SQ)
+        const strength = 0.85
+        data[idx] = mix(r, newBg.r, t * strength)
+        data[idx + 1] = mix(g, newBg.g, t * strength)
+        data[idx + 2] = mix(b, newBg.b, t * strength)
+      }
+    }
+
+    ctx.putImageData(imageData, 0, 0)
     return canvas.toDataURL('image/png')
   }
 
@@ -209,17 +320,19 @@ export function useBackground({
 
         const vp1 = page.getViewport({ scale: 1 })
         const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const maxScaleByPixels =
+          Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
         const scale = Math.min(dpiScale, maxScaleByPixels)
         const vp = page.getViewport({ scale })
 
         const off = document.createElement('canvas')
         off.width = Math.round(vp.width)
         off.height = Math.round(vp.height)
+
         await page.render({
           canvasContext: off.getContext('2d', { willReadFrequently: true }),
           viewport: vp,
-          background: 'rgba(0,0,0,0)'
+          background: 'rgba(0,0,0,0)',
         }).promise
 
         const dataUrl = deblendToTransparent(off, bg)
@@ -234,11 +347,14 @@ export function useBackground({
 
       const newBytes = await outDoc.save()
       originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
+      preview.value = URL.createObjectURL(
+        new Blob([newBytes], { type: 'application/pdf' }),
+      )
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
       emit('update:preview', preview.value)
+      emit('update:bgcolor', null)
       madeTransparentPdf.value = true
       checkerOn.value = true
       setHasAlpha(true)
@@ -250,54 +366,109 @@ export function useBackground({
     const img = imgEl.value
     if (!img?.naturalWidth) return
 
-    const w = img.naturalWidth, h = img.naturalHeight
+    const w = img.naturalWidth
+    const h = img.naturalHeight
     const off = document.createElement('canvas')
-    off.width = w; off.height = h
-    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, w, h)
+    off.width = w
+    off.height = h
+    off
+      .getContext('2d', { willReadFrequently: true })
+      .drawImage(img, 0, 0, w, h)
 
     const dataUrl = deblendToTransparent(off, origBg.value)
     preview.value = dataUrl
 
+    transparentBase.value = dataUrl
+
     emit('update:preview', dataUrl)
-    
     emit('update:meta', {
       name: originalFileName.value,
       type: originalFileType.value,
       size: atob(dataUrl.split(',')[1]).length,
-      width: w, height: h,
-      lastModified: Date.now()
+      width: w,
+      height: h,
+      lastModified: Date.now(),
     })
+
+    emit('update:bgcolor', null)
 
     madeTransparentImg.value = true
     checkerOn.value = true
     setHasAlpha(true)
   }
 
-  function previewBackgroundColor(hexColor) {
-    const src = getSourceCanvas()
+  async function canvasFromDataUrl(dataUrl) {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => {
+        const c = document.createElement('canvas')
+        c.width = img.naturalWidth || img.width
+        c.height = img.naturalHeight || img.height
+        c.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+        resolve(c)
+      }
+      img.onerror = reject
+      img.src = dataUrl
+    })
+  }
+
+  async function previewBackgroundColor(hexColor) {
+    let src
+
+    if (isPdf.value) {
+      src = getSourceCanvas()
+    } else if (transparentBase.value) {
+      try {
+        src = await canvasFromDataUrl(transparentBase.value)
+      } catch (e) {
+        console.error('previewBackgroundColor: base load failed', e)
+        src = getSourceCanvas()
+      }
+    } else {
+      src = getSourceCanvas()
+    }
+
     if (!src || !previewImg.value) return
 
-    const hasA = canvasHasAlpha(src)
-    const key = `${isPdf.value ? 'pdf' : 'img'}|${src.width}x${src.height}|${hasA ? 'alpha' : `bg:${origBg.value.r},${origBg.value.g},${origBg.value.b}`
-      }`
+    const srcHasAlpha = canvasHasAlpha(src) || hasAlpha.value || madeTransparentImg.value
 
-    if (matteKey !== key || !matteDataURL) {
+    let dataUrl
+
+    if (!srcHasAlpha) {
       const MAX_PREV_PX = 2e6
-      const scale = Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
+      const scale =
+        Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
       const w = Math.max(1, Math.round(src.width * scale))
       const h = Math.max(1, Math.round(src.height * scale))
 
       const off = document.createElement('canvas')
       off.width = w
       off.height = h
-      off.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, w, h)
+      off
+        .getContext('2d', { willReadFrequently: true })
+        .drawImage(src, 0, 0, w, h)
 
-      matteDataURL = hasA ? off.toDataURL('image/png') : deblendToTransparent(off, origBg.value)
-      matteKey = key
+      dataUrl = recolorFlatBackground(off, origBg.value, hexColor)
+      previewImg.value.style.backgroundColor = ''
+    } else {
+      const MAX_PREV_PX = 2e6
+      const scale =
+        Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
+      const w = Math.max(1, Math.round(src.width * scale))
+      const h = Math.max(1, Math.round(src.height * scale))
+
+      const off = document.createElement('canvas')
+      off.width = w
+      off.height = h
+      off
+        .getContext('2d', { willReadFrequently: true })
+        .drawImage(src, 0, 0, w, h)
+
+      dataUrl = off.toDataURL('image/png')
+      previewImg.value.style.backgroundColor = hexColor
     }
 
-    previewImg.value.src = matteDataURL
-    previewImg.value.style.backgroundColor = hexColor
+    previewImg.value.src = dataUrl
     previewType.value = 'bgcolor'
     previewOn.value = true
   }
@@ -318,61 +489,96 @@ export function useBackground({
     endPreviewBackgroundColor()
 
     if (isPdf.value) {
-      const needsMatte = madeTransparentPdf.value || (pdfCanvas.value && canvasHasAlpha(pdfCanvas.value))
-
-      if (!needsMatte) {
-        emit('update:preview', preview.value)
-        emit('update:bgcolor', hexColor)
-        origBg.value = hexToRgb(hexColor)
-        checkerOn.value = false
-        await renderPdfPage()
+      const bytes = pdfBytes()
+      let srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+      try {
+        srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+      } catch (e) {
+        console.error('Failed to load PDF in setBackgroundColor:', e)
         return
       }
 
-      const pdf = await getDocument({ data: pdfBytes() }).promise
+      const pageCount = srcDoc.getPageCount()
+      const pdfJsDoc = await getDocument({ data: bytes }).promise
       const outDoc = await PDFDocument.create()
 
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p)
+      const activeIndex = Math.min(
+        Math.max((currentPage.value || 1) - 1, 0),
+        pageCount - 1,
+      )
 
-        const vp1 = page.getViewport({ scale: 1 })
-        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+      const bgForDeblend = origBg.value || { r: 255, g: 255, b: 255 }
+      const jsPage = await pdfJsDoc.getPage(activeIndex + 1)
 
-        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
-        const scale = Math.min(dpiScale, maxScaleByPixels)
-        const vp = page.getViewport({ scale })
+      const vp1 = jsPage.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+      const maxScaleByPixels =
+        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const scale = Math.min(dpiScale, maxScaleByPixels)
+      const vp = jsPage.getViewport({ scale })
 
-        const off = document.createElement('canvas')
-        off.width = Math.round(vp.width)
-        off.height = Math.round(vp.height)
+      const off = document.createElement('canvas')
+      off.width = Math.round(vp.width)
+      off.height = Math.round(vp.height)
 
-        await page.render({
-          canvasContext: off.getContext('2d', { willReadFrequently: true, alpha: true }),
-          viewport: vp,
-          background: 'rgba(0,0,0,0)'
-        }).promise
+      await jsPage.render({
+        canvasContext: off.getContext('2d', {
+          willReadFrequently: true,
+          alpha: true,
+        }),
+        viewport: vp,
+        background: 'rgba(0,0,0,0)',
+      }).promise
 
+      const rasterHasAlpha = canvasHasAlpha(off)
+
+      let pngImg
+      if (!rasterHasAlpha) {
+        const dataUrl = recolorFlatBackground(off, bgForDeblend, hexColor)
+        const pngBytes = dataURLtoU8(dataUrl)
+        pngImg = await outDoc.embedPng(pngBytes)
+      } else {
         const matte = document.createElement('canvas')
         matte.width = off.width
         matte.height = off.height
         const mctx = matte.getContext('2d', { willReadFrequently: true })
+
         mctx.fillStyle = hexColor
         mctx.fillRect(0, 0, matte.width, matte.height)
         mctx.drawImage(off, 0, 0)
 
         const pngBytes = dataURLtoU8(matte.toDataURL('image/png'))
-        const pngImg = await outDoc.embedPng(pngBytes)
-        const wPt = vp1.width
-        const hPt = vp1.height
-        const outPage = outDoc.addPage([wPt, hPt])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
+        pngImg = await outDoc.embedPng(pngBytes)
+      }
+
+      const pageIndices = srcDoc.getPageIndices()
+      const copiedPages = await outDoc.copyPages(srcDoc, pageIndices)
+
+      for (let i = 0; i < copiedPages.length; i++) {
+        const page = copiedPages[i]
+
+        if (i === activeIndex) {
+          const { width: pw, height: ph } = page.getSize()
+          page.drawImage(pngImg, {
+            x: 0,
+            y: 0,
+            width: pw,
+            height: ph,
+          })
+        }
+
+        outDoc.addPage(page)
       }
 
       const newBytes = await outDoc.save()
       originalPdf.value = newBytes
 
+      if (preview.value && preview.value.startsWith('blob:')) {
+        URL.revokeObjectURL(preview.value)
+      }
+
       preview.value = URL.createObjectURL(
-        new Blob([newBytes], { type: 'application/pdf' })
+        new Blob([newBytes], { type: 'application/pdf' }),
       )
 
       originalFileSize.value = newBytes.length
@@ -380,43 +586,82 @@ export function useBackground({
 
       emit('update:preview', preview.value)
       emit('update:bgcolor', hexColor)
+
       origBg.value = hexToRgb(hexColor)
 
       madeTransparentPdf.value = false
       checkerOn.value = false
       setHasAlpha(false)
-      await renderPdfPage()
+
+      if (panCont.value) {
+        panCont.value.style.backgroundColor = hexColor
+      }
+
+      await renderPdfPage(currentPage.value)
       return
     }
 
-    const img = imgEl.value
-    if (!img?.naturalWidth) return
-    const w = img.naturalWidth, h = img.naturalHeight
+    let src
 
-    const src = document.createElement('canvas')
-    src.width = w
-    src.height = h
-    src.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    if (transparentBase.value) {
+      try {
+        src = await canvasFromDataUrl(transparentBase.value)
+      } catch (e) {
+        console.error('setBackgroundColor: base load failed', e)
+      }
+    }
+
+    if (!src) {
+      const img = imgEl.value
+      if (!img?.naturalWidth) return
+
+      src = document.createElement('canvas')
+      src.width = img.naturalWidth
+      src.height = img.naturalHeight
+      src.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    }
+
+    const w = src.width
+    const h = src.height
+
+    const srcHasAlpha =
+      canvasHasAlpha(src) || hasAlpha.value || madeTransparentImg.value
+
+    if (srcHasAlpha && !transparentBase.value) {
+      try {
+        transparentBase.value = src.toDataURL('image/png')
+      } catch (e) {
+        console.error('setBackgroundColor: cannot snapshot base', e)
+      }
+    }
 
     let newSrc
-    if (!hasAlpha.value && !canvasHasAlpha(src)) {
-      newSrc = colorToAlphaAndFillCanvas(src, hexColor, origBg.value)
+    if (!srcHasAlpha) {
+      newSrc = recolorFlatBackground(src, origBg.value, hexColor)
+      setHasAlpha(false)
+      madeTransparentImg.value = false
     } else {
       const matte = document.createElement('canvas')
       matte.width = w
       matte.height = h
       const mctx = matte.getContext('2d', { willReadFrequently: true })
+
       mctx.fillStyle = hexColor
       mctx.fillRect(0, 0, w, h)
       mctx.drawImage(src, 0, 0)
+
       newSrc = matte.toDataURL('image/png')
+      setHasAlpha(true)
+      madeTransparentImg.value = false
     }
 
     preview.value = newSrc
     emit('update:preview', newSrc)
     emit('update:bgcolor', hexColor)
     emit('update:meta', {
-      name: (originalFileName.value || 'image').replace(/\.[^.]+$/, '') + '-matte.png',
+      name:
+        (originalFileName.value || 'image').replace(/\.[^.]+$/, '') +
+        '-matte.png',
       type: 'image/png',
       size: atob(newSrc.split(',')[1]).length,
       width: w,
@@ -425,83 +670,10 @@ export function useBackground({
     })
 
     origBg.value = hexToRgb(hexColor)
-    madeTransparentImg.value = false
-    setHasAlpha(false)
     checkerOn.value = false
     if (panCont.value) panCont.value.style.backgroundColor = hexColor
   }
 
-  function colorToAlphaAndFillCanvas(canvas, hexColor, bgRGB) {
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    const width = canvas.width
-    const height = canvas.height
-    const imageData = context.getImageData(0, 0, width, height)
-    const data = imageData.data
-
-    const srgbToLinear = (value) => {
-      value /= 255
-      return value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
-    }
-
-    const linearToSrgb = (value) => {
-      value = value <= 0.0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - 0.055
-      return Math.max(0, Math.min(255, Math.round(value * 255)))
-    }
-
-    const background = bgRGB || { r: data[0], g: data[1], b: data[2] }
-    const baseRedLinear = srgbToLinear(background.r)
-    const baseGreenLinear = srgbToLinear(background.g)
-    const baseBlueLinear = srgbToLinear(background.b)
-
-    const tolerance = 0.08
-
-    for (let index = 0; index < data.length; index += 4) {
-      const srcRedLinear = srgbToLinear(data[index])
-      const srcGreenLinear = srgbToLinear(data[index + 1])
-      const srcBlueLinear = srgbToLinear(data[index + 2])
-
-      const alphaFromRed = baseRedLinear < 1e-6
-        ? (srcRedLinear > baseRedLinear ? 1 : 0)
-        : (srcRedLinear >= baseRedLinear ? (srcRedLinear - baseRedLinear) / (1 - baseRedLinear) : (baseRedLinear - srcRedLinear) / baseRedLinear)
-
-      const alphaFromGreen = baseGreenLinear < 1e-6
-        ? (srcGreenLinear > baseGreenLinear ? 1 : 0)
-        : (srcGreenLinear >= baseGreenLinear
-          ? (srcGreenLinear - baseGreenLinear) / (1 - baseGreenLinear)
-          : (baseGreenLinear - srcGreenLinear) / baseGreenLinear)
-
-      const alphaFromBlue = baseBlueLinear < 1e-6
-        ? (srcBlueLinear > baseBlueLinear ? 1 : 0)
-        : (srcBlueLinear >= baseBlueLinear
-          ? (srcBlueLinear - baseBlueLinear) / (1 - baseBlueLinear)
-          : (baseBlueLinear - srcBlueLinear) / baseBlueLinear)
-
-      let alpha = Math.max(alphaFromRed, alphaFromGreen, alphaFromBlue)
-      if (tolerance > 0) {
-        alpha = Math.max(0, Math.min(1, (alpha - tolerance) / (1 - tolerance)))
-      }
-
-      let foreRedLinear = 0, foreGreenLinear = 0, foreBlueLinear = 0
-      if (alpha > 1e-5) {
-        foreRedLinear = (srcRedLinear - (1 - alpha) * baseRedLinear) / alpha
-        foreGreenLinear = (srcGreenLinear - (1 - alpha) * baseGreenLinear) / alpha
-        foreBlueLinear = (srcBlueLinear - (1 - alpha) * baseBlueLinear) / alpha
-      }
-
-      data[index] = linearToSrgb(foreRedLinear)
-      data[index + 1] = linearToSrgb(foreGreenLinear)
-      data[index + 2] = linearToSrgb(foreBlueLinear)
-      data[index + 3] = Math.round(alpha * 255)
-    }
-
-    context.putImageData(imageData, 0, 0)
-    context.globalCompositeOperation = 'destination-over'
-    context.fillStyle = hexColor
-    context.fillRect(0, 0, width, height)
-    context.globalCompositeOperation = 'source-over'
-
-    return canvas.toDataURL('image/png')
-  }
 
   return {
     previewImg,

@@ -1,77 +1,118 @@
+
 <template>
   <div class="background-color-control">
-    <button class="control-toggle" @click="toggle">
-      <span>Background Color</span>
-      <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
+    <button class="control-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
+      <span class="control-toggle-left">
+        <img :src="backgroundIcon" alt="Background color" class="toggle-icon" />
+        <span class="toggle-label ty-title-medium">Background color</span>
+      </span>
+      <span :class="!isOpen ? 'arrow-right' : 'arrow-down'"></span>
     </button>
 
-    <div v-show="!collapsed" class="control-panel">
-      <div v-if="meta">
-        <div class="field">
-          <label for="bg-color-input">Hex Color</label>
+    <transition
+      name="accordion"
+      @enter="onEnter"
+      @after-enter="onAfterEnter"
+      @leave="onLeave"
+    >
+      <div v-show="isOpen" class="slide-wrapper">
+        <div class="control-panel">
+          <div v-if="meta">
+            <div class="field">
+              <label for="bg-color-input" class="ty-body-medium">Hex Color</label>
 
-          <input
-            id="bg-color-input"
-            type="text"
-            :value="bgTransparent ? 'transparent' : color"
-            @input="onColorInput"
-            :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
-          />
+              <input
+                id="bg-color-input"
+                type="text"
+                class="ty-body-small"
+                :value="color"
+                @input="onColorInput"
+                :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
+              />
 
-          <div
-            class="color-box"
-            :style="{ backgroundColor: normalizedColor ?? '#ffffff' }"
-            @click="openPicker">
+              <div
+                class="color-box"
+                :style="{ backgroundColor: normalizedColor ?? '#ffffff' }"
+                @click="openPicker">
+              </div>
+
+              <input
+                ref="picker"
+                type="color"
+                v-model="color"
+                class="native-picker"
+              />
+            </div>
+
+            <div class="btn-row">
+              <button class="apply-btn ty-body-small bg-lime600" @click="applyColor">
+                Apply
+              </button>
+
+              <button
+                class="remove-btn ty-body-small bg-red600"
+                @click="removeBackground"
+                :disabled="bgTransparent"
+              >
+                Remove Background
+              </button>
+            </div>
           </div>
 
-          <input
-            ref="picker"
-            type="color"
-            v-model="color"
-            class="native-picker"
-          />
-        </div>
-
-        <div class="btn-row">
-          <button class="apply-btn" @click="applyColor">
-            Apply
-          </button>
-
-          <button
-            class="remove-btn"
-            @click="removeBackground"
-            :disabled="bgTransparent"
-          >
-            Remove Background
-          </button>
+          <p v-else class="no-image">No image loaded.</p>
         </div>
       </div>
-
-      <p v-else class="no-image">No image loaded.</p>
-    </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
-  import { ref, onMounted, watch, computed, onBeforeUnmount } from 'vue'
+  import { ref, watch, computed, onBeforeUnmount } from 'vue'
+  import backgroundIcon from '@/assets/BackgroundColor.svg'
 
   const props = defineProps({
     initialColor: { type: String, default: '#ffffff' },
     bgTransparent: { type: Boolean, default: false },
-    meta: Object
+    meta: Object,
+    isOpen: { type: Boolean, default: false },
+    appliedColor: { type: String, default: null }
   })
 
-  const emit = defineEmits(['apply-color', 'preview-color', 'end-preview-color', 'remove-background'])
+  const emit = defineEmits([
+    'apply-color',
+    'preview-color',
+    'end-preview-color',
+    'remove-background',
+    'toggle'
+  ])
 
-  const collapsed = ref(true)
   const color = ref(props.initialColor)
+  const lastValidColor = ref(null)
   const picker = ref(null)
+
+  function normalizeHex (val) {
+    const s = String(val || '').trim()
+    const m6 = s.match(/^#?([0-9a-fA-F]{6})$/)
+    if (m6) return `#${m6[1].toLowerCase()}`
+
+    const m3 = s.match(/^#?([0-9a-fA-F]{3})$/)
+    if (m3) {
+      return (
+        '#' +
+        m3[1]
+          .split('')
+          .map(c => c + c)
+          .join('')
+          .toLowerCase()
+      )
+    }
+    return null
+  }
+
   const normalizedColor = computed(() => normalizeHex(color.value))
 
   function onColorInput(e) {
-    if (!props.bgTransparent) {
-      color.value = e.target.value
-    }
+    color.value = e.target.value
   }
 
   function openPicker() {
@@ -80,25 +121,9 @@
     }
   }
 
-  function normalizeHex (val) {
-    const s = String(val || '').trim()
-    const m6 = s.match(/^#?([0-9a-fA-F]{6})$/)
-
-    if (m6) { 
-      return `#${m6[1].toLowerCase()}`
-    }
-
-    const m3 = s.match(/^#?([0-9a-fA-F]{3})$/)
-
-    if (m3) { 
-      return `#${m3[1].split('').map(c => c + c).join('').toLowerCase()}`
-    }
-
-    return null
-  }
-
   function applyColor() {
-    emit('apply-color', normalizedColor.value ?? '#ffffff')
+    if (!lastValidColor.value) return
+    emit('apply-color', lastValidColor.value)
   }
 
   function removeBackground() {
@@ -107,43 +132,73 @@
 
   let previewTimer = null
   watch(color, (v) => {
-    if (collapsed.value){ 
-      return 
-    }
+    if (!props.isOpen) return
 
     const hx = normalizeHex(v)
-    if (!hx){ 
-      return 
-    }
+    if (!hx) return
+
+    lastValidColor.value = hx
 
     clearTimeout(previewTimer)
     previewTimer = setTimeout(() => emit('preview-color', hx), 80)
   })
 
-  function toggle () {
-    collapsed.value = !collapsed.value
-    if (collapsed.value) {
-      emit('end-preview-color')
+  watch(
+    () => props.isOpen,
+    (newVal, oldVal) => {
+      if (!oldVal && newVal) {
+        if (props.bgTransparent) {
+          color.value = ''
+          lastValidColor.value = null
+        } else if (props.appliedColor) {
+          color.value = props.appliedColor
+          lastValidColor.value = normalizeHex(color.value)
+        } else {
+          color.value = props.initialColor || '#ffffff'
+          lastValidColor.value = normalizeHex(color.value)
+        }
+      }
+
+      if (oldVal && !newVal) {
+        emit('end-preview-color')
+      }
     }
-  }
+  )
 
-  onMounted(() => {
-    color.value = props.initialColor
-  })
-  
-  watch(() => props.initialColor, (v) => {
-    color.value = v
-  })
+  watch(
+    () => props.bgTransparent,
+    (v) => {
+      if (v) {
+        color.value = ''
+        lastValidColor.value = null
+      }
+    }
+  )
 
-  watch(() => props.bgTransparent, (v) => {
-    if (v) color.value = ''
-  })
+  watch(
+    () => props.appliedColor,
+    (v) => {
+      if (!props.bgTransparent && v) {
+        color.value = v
+        lastValidColor.value = normalizeHex(v)
+      }
+    }
+  )
+
+  watch(
+    () => props.initialColor,
+    (v) => {
+      if (!props.bgTransparent && !props.appliedColor) {
+        color.value = v || '#ffffff'
+        lastValidColor.value = normalizeHex(color.value)
+      }
+    }
+  )
 
   onBeforeUnmount(() => {
     if (previewTimer) {
       clearTimeout(previewTimer)
     }
-
     emit('end-preview-color')
   })
 </script>
@@ -156,32 +211,39 @@
   .control-toggle {
     width: 100%; 
     padding: 0.7rem; 
-    background: rgba(0, 0, 0, 0.05);
     border: none;
-    font-weight: bold;
     display: flex;
     justify-content: space-between;
     align-items: center;
     cursor: pointer;
   }
 
-  .control-toggle span { 
-    font-size: 24px;
+  .control-toggle-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .toggle-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
   }
 
   .control-panel { 
-    padding: 0.5rem;
+    padding: 0.75rem;
+    padding-top: 1rem;
   }
 
   .field {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    margin-bottom: 1rem;
   }
 
   .field label {
-    font-weight: 600;
+    font-weight: 500;
     white-space: nowrap;
     color: black; 
   }
@@ -189,13 +251,14 @@
   .field input[type="text"] {
     flex: 1;
     padding: 0.4rem;
+    margin-left: 1.5rem;
     border: 1px solid #ccc;
     border-radius: 4px;
   }
 
   .color-box {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: 32px;
     border: 1px solid #ccc;
     border-radius: 4px;
     cursor: pointer;
@@ -207,12 +270,11 @@
 
   .apply-btn {
     flex: 1;
-    padding: 0.6rem 1rem;
+    padding: 0.4rem 0;
     border: none;
-    background: #28a745;
     color: white;
     font-weight: 600;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
   }
 
@@ -236,17 +298,16 @@
 
   .btn-row {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.75rem;
   }
 
   .remove-btn {
     flex: 1;
-    padding: 0.6rem 1rem;
+    padding: 0.4rem 0;
     border: none;
-    background: #e53935;
     color: white;
     font-weight: 600;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
   }
 
@@ -254,5 +315,9 @@
     padding: 0.5rem;
     font-style: italic;
     color: #666;
+  }
+
+  .slide-wrapper {
+    overflow: hidden;
   }
 </style>

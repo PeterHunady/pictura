@@ -1,41 +1,55 @@
 <template>
-  <div :class="['sidebar', { collapsed }]" :style="{ top: props.topGap }">
-    <button class="toggle-btn" @click="collapsed = !collapsed">
+  <div :class="['sidebar bg-neutral100', { collapsed }]" :style="{ top: props.topGap }">
+    <button class="toggle-btn bg-neutral100" @click="collapsed = !collapsed">
       <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
     </button>
 
-    <div class="content" ref="contentRef" v-show="!collapsed">
-      <Metadata :meta="meta" />
-
-      <FixArtifactsBtn
+    <div class="content bg-neutral100" ref="contentRef" v-show="!collapsed">
+      <Metadata
         :meta="meta"
-        @fix-artifacts="emit('fix-artifacts')"
-        @highlight-artifacts="emit('highlight-artifacts', $event)"
+        :isOpen="openTool === 'metadata'"
+        @toggle="toggleTool('metadata')"
       />
 
       <CropControls
         :meta="meta"
         :initial-size="{ width: initialSize.width, height: initialSize.height }"
+        :isOpen="openTool === 'crop'"
         @crop="$emit('crop')"
         @preview="$emit('preview-crop', $event)"
         @apply="$emit('resize-crop', $event)"
-      />
-
-      <GrayscaleControl
-        :meta="meta"
-        @apply-grayscale="emit('apply-grayscale', $event)"
-        @preview="emit('preview-grayscale', $event)"
-        @end-preview="emit('end-preview-grayscale')"
+        @toggle="toggleTool('crop')"
       />
 
       <BackgroundColorControl
         :meta="meta"
         :initialColor="initialColor"
+        :applied-color="appliedBgColor"
+        :isOpen="openTool === 'background'"
         @apply-color="emit('apply-color', $event)"
         @preview-color="emit('preview-color', $event)"
         @end-preview-color="emit('end-preview-color')"
         @remove-background="$emit('remove-background')"
         :bgTransparent="props.bgTransparent"
+        @toggle="toggleTool('background')"
+      />
+
+      <GrayscaleControl
+        :meta="meta"
+        :isOpen="openTool === 'grayscale'"
+        :applied-strength="appliedGrayscaleStrength"
+        @apply-grayscale="emit('apply-grayscale', $event)"
+        @preview="emit('preview-grayscale', $event)"
+        @end-preview="emit('end-preview-grayscale')"
+        @toggle="toggleTool('grayscale')"
+      />
+
+      <FixArtifactsBtn
+        :meta="meta"
+        :isOpen="openTool === 'artifacts'"
+        @fix-artifacts="emit('fix-artifacts')"
+        @highlight-artifacts="emit('highlight-artifacts', $event)"
+        @toggle="toggleTool('artifacts')"
       />
 
       <ExportControl
@@ -43,19 +57,11 @@
         :suggestedType="exportSuggestedType ?? meta?.type"
         :sizeHint="exportBytes"
         :loading="exportLoading"
+        :isOpen="openTool === 'export'"
         @export="emit('export', $event)"
         @request-preview="emit('request-export-preview', $event)"
+        @toggle="toggleTool('export')"
       />
-
-      <div class="action-btns">
-        <button
-          class="icon-btn"
-          @click="$emit('clear')"
-          title="Vymazať obrázok"
-        >
-          <img class="icon" :src="binIcon" alt="Delete" />
-        </button>
-      </div>
 
       <button
         v-if="showScrollArrow"
@@ -79,10 +85,9 @@
   import FixArtifactsBtn from './FixArtifactsButton.vue'
   import BackgroundColorControl from './BackgroundColorControl.vue'
   import GrayscaleControl from './GrayscaleControl.vue'
-  import binIcon from '@/assets/bin.png'
   import ExportControl from './ExportControl.vue'
-  import arrowUp from '@/assets/arrowUp.png'
-  import arrowDown from '@/assets/arrowDown.png'
+  import arrowUp from '@/assets/arrowUp.svg'
+  import arrowDown from '@/assets/arrowDown.svg'
 
   const props = defineProps({
     modelValue: { type: Boolean, default: false },
@@ -94,7 +99,9 @@
     exportSuggestedName: { type: String, default: null },
     exportSuggestedType: { type: String, default: null },
     topGap: { type: String, default: '0px' },
-    bgTransparent: { type: Boolean, default: false }
+    bgTransparent: { type: Boolean, default: false },
+    appliedGrayscaleStrength: { type: Number, default: null },
+    appliedBgColor: { type: String, default: null }
   })
 
 
@@ -110,6 +117,16 @@
   watch(() => props.modelValue, v => (collapsed.value = v))
   watch(collapsed, v => emit('update:modelValue', v))
   watch(() => props.meta, m => { if (!m && window.innerWidth < 768) collapsed.value = true })
+
+  const openTool = ref(null)
+
+  const toggleTool = (toolName) => {
+    if (openTool.value === toolName) {
+      openTool.value = null
+    } else {
+      openTool.value = toolName
+    }
+  }
 
   const contentRef = ref(null)
   const isAtBottom = ref(false)
@@ -174,10 +191,9 @@
   .sidebar {
     position: fixed;
     width: 30vw; max-width: 300px;
-    background: #fafafa;
     border-left: 1px solid #ddd;
     box-shadow: -2px 0 4px rgba(0,0,0,.1);
-    transition: transform .3s ease;
+    transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
     z-index: 100;
     box-sizing: border-box;
     right: 0; bottom: 0;
@@ -200,7 +216,6 @@
     border: 1px solid #ddd;
     border-right: none;
     border-radius: 4px 0 0 4px;
-    background: #fff;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -262,10 +277,12 @@
   :deep(.export),
   :deep(.export-control) {
     background: #fff;
-    border: 1px solid #e6e6e6;
+    border: 1px solid #DDD;
     border-radius: 12px;
-    box-shadow: 0 1px 0 rgba(0,0,0,.03);
+    box-shadow: 1px 2px 3px rgba(0,0,0,.4);
     background-clip: padding-box;
+    overflow: hidden;
+    box-sizing: border-box;
   }
 
   :deep(.metadata > .metadata-toggle),
@@ -275,12 +292,12 @@
   :deep(.background-color-control > .control-toggle),
   :deep(.export > .export-toggle),
   :deep(.export-control > .export-toggle) {
-    background: #f3f4f6;
     border: 0;
-    border-bottom: 1px solid #ececec;
+    box-shadow: 0 1px 0 rgba(0,0,0,.03);
     padding: .7rem .75rem;
     font-weight: 700;
     text-align: left;
+    box-sizing: border-box;
   }
 
   :deep(.metadata > .metadata-list),
@@ -314,21 +331,6 @@
   :deep(.highlight-btn) {
     border-radius: 6px;
     border: 1px solid #ddd;
-    background: #eee;
-  }
-
-  :deep(.highlight-btn:hover) {
-    background: #e6e6e6;
-  }
-
-  .action-btns{
-    margin-top: auto;
-    display: flex;
-    justify-content: flex-end;
-    gap: .5rem;
-    padding-top: .5rem;
-    border-top: 1px solid #e6e6e6;
-    background: transparent;
   }
 
   .scroll-arrow-btn {

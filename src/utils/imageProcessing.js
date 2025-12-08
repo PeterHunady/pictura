@@ -127,9 +127,6 @@ export function gaussianBlur(imageData, W, H, kSize, sigma){
   return new ImageData(out, W, H);
 }
 
-/**
- * Check if canvas has alpha transparency
- */
 export function canvasHasAlpha(src, stepHint = 200) {
   if (!src?.width || !src?.height) return false
 
@@ -147,9 +144,6 @@ export function canvasHasAlpha(src, stepHint = 200) {
   return false
 }
 
-/**
- * Check if image element has alpha transparency
- */
 export function hasAlphaImage(imageEl) {
   const w = imageEl.naturalWidth, h = imageEl.naturalHeight
   if (!w || !h) return false

@@ -1,52 +1,80 @@
 <template>
   <div class="export export-control">
-    <button class="export-toggle" @click="collapsed = !collapsed">
-      <span>Export</span>
-      <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
+    <button class="export-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
+      <span class="export-toggle-left">
+        <img :src="exportIcon" alt="Export" class="toggle-icon" />
+        <span class="toggle-label ty-title-medium">Export</span>
+      </span>
+      <span :class="!isOpen ? 'arrow-right' : 'arrow-down'"></span>
     </button>
 
-    <div v-show="!collapsed" class="export-panel">
-      <div v-if="suggestedName">
-        <div class="row">
-          <label for="exp-name">File name</label>
-          <input id="exp-name" type="text" v-model.trim="name" />
-        </div>
+    <transition
+      name="accordion"
+      @enter="onEnter"
+      @after-enter="onAfterEnter"
+      @leave="onLeave"
+    >
+      <div v-show="isOpen" class="slide-wrapper">
+        <div class="export-panel">
+          <div v-if="suggestedName">
+            <div class="row ty-body-medium">
+              <label for="exp-name">File name</label>
+              <input
+                id="exp-name"
+                type="text"
+                class="ty-body-small"
+                v-model.trim="name"
+              />
+            </div>
 
-        <div class="row">
-          <label for="exp-format">Format</label>
-          <select id="exp-format" v-model="format">
-            <option value="pdf">PDF</option>
-            <option value="png">PNG</option>
-            <option value="jpg">JPG</option>
-          </select>
-        </div>
+            <div class="row ty-body-medium">
+              <label for="exp-format" class="ty-body-medium">Format</label>
+              <select
+                id="exp-format"
+                v-model="format"
+                class="ty-body-small"
+              >
+                <option value="pdf">PDF</option>
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+              </select>
+            </div>
 
-        <div class="hint">
-          <span>Estimated size:</span>
-          <strong v-if="loading">…</strong>
-          <strong v-else>{{ prettySize }}</strong>
-        </div>
+            <div class="hint ty-body-medium">
+              <span>Estimated size:</span>
+              <strong v-if="loading">…</strong>
+              <strong v-else>{{ prettySize }}</strong>
+            </div>
 
-        <button class="save-btn" :disabled="!name" @click="onSave">Save</button>
+            <button
+              class="save-btn ty-body-small bg-lime500"
+              :disabled="!name"
+              @click="onSave"
+            >
+              Save
+            </button>
+          </div>
+
+          <p v-else class="no-image">No image loaded.</p>
+        </div>
       </div>
-
-      <p v-else class="no-image">No image loaded.</p>
-    </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
   import { ref, watch, computed, onBeforeUnmount } from 'vue'
+  import exportIcon from '@/assets/export.svg'
 
   const props = defineProps({
-      suggestedName: { type: String, default: 'export' },
-      suggestedType: { type: String, default: '' },
-      sizeHint: { type: Number, default: null },  
-      loading: { type: Boolean, default: false }
+    suggestedName: { type: String, default: 'export' },
+    suggestedType: { type: String, default: '' },
+    sizeHint: { type: Number, default: null },
+    loading: { type: Boolean, default: false },
+    isOpen: { type: Boolean, default: false }
   })
 
-  const emit = defineEmits(['export','request-preview'])
-  const collapsed = ref(true)
+  const emit = defineEmits(['export','request-preview','toggle'])
   const name = ref('')
   const format = ref('png')
 
@@ -60,35 +88,35 @@
   }
 
   function inferFormat(s = '') {
-      s = s.toLowerCase()
-      if (s.includes('pdf')) {
-        return 'pdf'
-      }
+    s = s.toLowerCase()
+    if (s.includes('pdf')) {
+      return 'pdf'
+    }
 
-      if (s.includes('jpeg') || s.includes('jpg')){
-        return 'jpg'
-      }
+    if (s.includes('jpeg') || s.includes('jpg')){
+      return 'jpg'
+    }
 
-      if (s.includes('png')) {
-        return 'png'
-      }
-
-      const m = s.match(/\.([a-z0-9]+)$/)
-      const ext = m?.[1]
-      
-      if (ext==='pdf') {
-        return 'pdf'
-      }
-
-      if (ext==='jpg' || ext==='jpeg') {
-        return 'jpg'
-      }
-
-      if (ext==='png') {
-        return 'png'
-      }
-
+    if (s.includes('png')) {
       return 'png'
+    }
+
+    const m = s.match(/\.([a-z0-9]+)$/)
+    const ext = m?.[1]
+    
+    if (ext==='pdf') {
+      return 'pdf'
+    }
+
+    if (ext==='jpg' || ext==='jpeg') {
+      return 'jpg'
+    }
+
+    if (ext==='png') {
+      return 'png'
+    }
+
+    return 'png'
   }
 
   function applySuggested(){
@@ -104,7 +132,7 @@
     clearTimeout(t)
     t = setTimeout(() => emit('request-preview', { name: n, format: f }), 150)
   }, { immediate: true })
-  
+
   onBeforeUnmount(() => clearTimeout(t))
 
   function onSave(){
@@ -120,6 +148,34 @@
     const kb = b / 1024
     return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb/1024).toFixed(2)} MB`
   })
+
+  const onEnter = (el) => {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+
+    const target = el.scrollHeight
+
+    requestAnimationFrame(() => {
+      el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
+      el.style.height = target + 'px'
+      el.style.opacity = '1'
+    })
+  }
+
+  const onAfterEnter = (el) => {
+    el.style.height = 'auto'
+    el.style.transition = ''
+  }
+
+  const onLeave = (el) => {
+    el.style.height = el.scrollHeight + 'px'
+    el.style.opacity = '1'
+    void el.offsetHeight
+
+    el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
+    el.style.height = '0px'
+    el.style.opacity = '0'
+  }
 </script>
 
 <style scoped>
@@ -130,7 +186,6 @@
   .export-toggle {
     width: 100%;
     padding: .7rem;
-    background: rgba(0,0,0,.05);
     border: none;
     font-weight: 700;
     display: flex;
@@ -139,12 +194,21 @@
     cursor: pointer;
   }
 
-  .export-toggle span {
-    font-size: 24px;
+  .export-toggle-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .toggle-icon {
+    width: 20px;
+    height: 20px;
+    display: block;
   }
 
   .export-panel {
     padding: .75rem;
+    padding-top: 1rem;
   }
 
   .row {
@@ -156,7 +220,7 @@
   }
 
   .row label {
-    font-weight: 600;
+    font-weight: 500;
     color: #000;
   }
 
@@ -164,7 +228,7 @@
     width: 100%;
     padding: .4rem;
     border: 1px solid #ccc;
-    border-radius: 6px;
+    border-radius: 4px;
   }
 
   .hint{
@@ -172,11 +236,9 @@
     justify-content: space-between;
     align-items: center;
     padding: .5rem .6rem;
-    margin-bottom: .75rem;
+    margin-bottom: 1rem;
     border: 1px dashed #e0e0e0;
-    border-radius: 8px;
-    background: #fafafa;
-    font-size: .95rem;
+    border-radius: 4px;
   }
 
   .hint span{
@@ -189,18 +251,12 @@
 
   .save-btn {
     width: 100%;
-    padding: .6rem 1rem;
+    padding: .5rem 0;
     border: none;
     border-radius: 6px;
-    background: #28a745;
     color: #fff;
     font-weight: 700;
     cursor: pointer;
-  }
-
-  .save-btn:disabled {
-    opacity: .6;
-    cursor: not-allowed;
   }
 
   .arrow-right, .arrow-down {
@@ -225,5 +281,9 @@
     padding: 0.5rem;
     font-style: italic;
     color: #666;
+  }
+
+  .slide-wrapper {
+    overflow: hidden;
   }
 </style>

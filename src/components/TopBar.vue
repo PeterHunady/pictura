@@ -1,91 +1,139 @@
 <template>
   <header class="topbar" :style="{ height: topGap }">
-    <div class="topbar-content" :style="{ paddingRight: rightGap }">
-      <img :src="defaultLogo" alt="Logo" class="logo" />
-
-      <div v-if="showScale" class="scale-control" ref="scaleControlRef">
-        <div class="scale-wrapper" @click="toggleDropdown">
-          <button class="scale-btn" @click.stop="decrementScale">−</button>
-          <input
-            type="number"
-            v-model.number="localScale"
-            @change="onScaleChange"
-            @keyup.enter="onScaleChange"
-            @click.stop
-            class="scale-input"
-            step="1"
-          />
-          <span class="scale-unit">%</span>
-          <button class="scale-btn" @click.stop="incrementScale">+</button>
-          <span
-            v-if="!isCalibrated"
-            class="warn-wrap"
-            @mouseenter="showPctTooltip = true"
-            @mouseleave="showPctTooltip = false"
-          >
-            <img :src="exclamationMark" class="warn-badge" alt="No calibration set yet" />
-            <span v-show="showPctTooltip" class="warn-tooltip">No calibration set yet</span>
-        </span>
-        </div>
-
-        <div v-if="dropdownOpen" class="scale-dropdown">
-          <div class="dropdown-item">
-            <label>Reference width (mm):</label>
-            <input
-              type="number"
-              v-model.number="localReferenceWidth"
-              @change="onReferenceWidthChange"
-              @keyup.enter="onReferenceWidthChange"
-              class="ref-input"
-              min="1"
-              max="1000"
-              :min="scaleMin"
-              :max="scaleMax"
-            />
-          </div>
-
-          <div class="dropdown-sep"></div>
-
-          <div class="dropdown-actions">
-            <button class="ref-action" @click="onCalibrate">Calibrate</button>
-            <button
-              v-if="isCalibrated"
-              class="ref-action danger"
-              @click="onClearCalibration"
-            >
-              Reset calibration
-            </button>
-          </div>
-        </div>
+    <div class="topbar-content">
+      <div class="brand">
+        <img :src="defaultLogo" alt="Logo" class="logo" />
       </div>
 
-      <div class="spacer"></div>
-    </div>
+      <div class="toolbar" v-if="showScale">
+        <div v-if="showActions" class="actions-group">
+          <button class="icon-btn" title="Undo (Ctrl+Z)" @click="$emit('undo')">
+            <img class="icon" :src="undoIcon" alt="Undo" />
+          </button>
 
-    <div class="actions-fixed" v-if="showActions">
-      <button class="icon-btn show-crop-preview" @click="visibleCropPreview(isVisible)">
-        <p>Show crop preview</p>
-        <img class="icon" :src="isVisible ? visibleIcon : invisibleIcon" alt="">
-      </button>
+          <button class="icon-btn" title="Reset" @click="$emit('reset')">
+            <img class="icon" :src="resetIcon" alt="Reset" />
+          </button>
 
-      <button class="icon-btn" title="Undo" @click="$emit('undo')">
-        <img class="icon" :src="undoIcon" alt="Undo" />
-      </button>
-      <button class="icon-btn" title="Reset" @click="$emit('reset')">
-        <img class="icon" :src="resetIcon" alt="Reset" />
-      </button>
+          <button
+            class="icon-btn danger"
+            title="Clear image"
+            @click="$emit('clear')"
+          >
+            <img class="icon" :src="binIcon" alt="Clear" />
+          </button>
+        </div>
+
+        <div v-if="showActions" class="toolbar-divider"></div>
+
+        <div v-if="showScale" class="scale-control" ref="scaleControlRef">
+          <div class="scale-wrapper bg-neutral200 bg-hover-neutral100" @click="toggleDropdown">
+            <button class="scale-btn ty-body-small" @click.stop="decrementScale">−</button>
+
+            <input
+              type="number"
+              v-model.number="localScale"
+              @change="onScaleChange"
+              @keyup.enter="onScaleChange"
+              @click.stop
+              class="scale-input ty-body-small"
+              step="1"
+            />
+
+            <span class="scale-unit ty-body-small">%</span>
+
+            <button class="scale-btn ty-body-small" @click.stop="incrementScale">+</button>
+
+            <button
+              class="reset-100-btn"
+              @click.stop="resetTo100"
+              title="Reset to 100%"
+            >
+              <img :src="resetZoomIcon" alt="Reset to 100%" class="reset-icon" />
+            </button>
+
+            <span
+              v-if="!isCalibrated"
+              class="warn-wrap"
+              @mouseenter="showPctTooltip = true"
+              @mouseleave="showPctTooltip = false"
+            >
+              <img
+                :src="exclamationMark"
+                class="warn-badge"
+                alt="No calibration set yet"
+              />
+              <span v-show="showPctTooltip" class="warn-tooltip ty-body-small">
+                No calibration set yet
+              </span>
+            </span>
+          </div>
+
+          <transition
+            name="scale-dropdown-anim"
+            @enter="onDropEnter"
+            @after-enter="onDropAfterEnter"
+            @leave="onDropLeave"
+          >
+            <div v-if="dropdownOpen" class="scale-dropdown">
+              <div class="dropdown-item ty-body-small">
+                <label>Reference width (mm):</label>
+                <input
+                  type="number"
+                  v-model.number="localReferenceWidth"
+                  @change="onReferenceWidthChange"
+                  @keyup.enter="onReferenceWidthChange"
+                  class="ref-input"
+                  min="1"
+                  max="1000"
+                  :min="scaleMin"
+                  :max="scaleMax"
+                />
+              </div>
+
+              <div class="dropdown-actions">
+                <button class="ref-action ty-body-small bg-lime600 bg-hover-lime500" @click="onCalibrate">Calibrate</button>
+                <button
+                  v-if="isCalibrated"
+                  class="ref-action danger ty-body-small bg-red600 bg-hover-red500"
+                  @click="onClearCalibration"
+                >
+                  Reset calibration
+                </button>
+              </div>
+            </div>
+          </transition>
+        </div>
+
+        <div v-if="showActions" class="toolbar-divider"></div>
+
+        <button
+          v-if="showActions"
+          class="toolbar-btn toolbar-btn-ghost ty-body-small bg-neutral200 bg-hover-neutral100"
+          @click="visibleCropPreview(isVisible)"
+        >
+          <span>Crop preview</span>
+          <img
+            class="icon icon-eye"
+            :src="isVisible ? visibleIcon : invisibleIcon"
+            alt=""
+          />
+        </button>
+      </div>
     </div>
   </header>
 </template>
 
 <script setup>
-  import { ref, watch, onUnmounted } from 'vue'
+  import { ref, watch, onMounted, onUnmounted } from 'vue'
   import defaultLogo from '@/assets/logo.png'
-  import undoIcon from '@/assets/undo.png'
-  import resetIcon from '@/assets/reset.png'
-  import visibleIcon from '@/assets/visible.png'
-  import invisibleIcon from '@/assets/invisible.png'
-  import exclamationMark from '@/assets/exclamationMark.png'
+  import undoIcon from '@/assets/undo.svg'
+  import resetIcon from '@/assets/reset.svg'
+  import binIcon from '@/assets/bin.svg'
+  import visibleIcon from '@/assets/visible.svg'
+  import invisibleIcon from '@/assets/invisible.svg'
+  import exclamationMark from '@/assets/exclamationMark.svg'
+  import resetZoomIcon from '@/assets/reset.svg'
 
   const props = defineProps({
     rightGap: { type: String, default: 'min(30vw, 300px)' },
@@ -103,9 +151,9 @@
   const showCalibTooltip = ref(false)
 
   const emit = defineEmits([
-    'undo','reset','visible',
+    'undo','reset','clear','visible',
     'update:scale','update:reference-width',
-    'calibrate','clear-calibration',
+    'calibrate','clear-calibration','reset-to-100',
   ])
 
   function onCalibrate(){ emit('calibrate') }
@@ -142,6 +190,10 @@
     onScaleChange()
   }
 
+  function resetTo100() {
+    emit('reset-to-100')
+  }
+
   function onScaleChange() {
     localScale.value = clampScale(localScale.value)
     emit('update:scale', localScale.value)
@@ -172,9 +224,50 @@
     }
   })
 
+  const handleKeydown = (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
+      event.preventDefault()
+      emit('undo')
+    }
+  }
+
+  onMounted(() => {
+    document.addEventListener('keydown', handleKeydown)
+  })
+
   onUnmounted(() => {
     document.removeEventListener('click', handleClickOutside)
+    document.removeEventListener('keydown', handleKeydown)
   })
+
+  const onDropEnter = (el) => {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+
+    const target = el.scrollHeight
+
+    requestAnimationFrame(() => {
+      el.style.transition = 'height 0.25s ease, opacity 0.25s ease'
+      el.style.height = target + 'px'
+      el.style.opacity = '1'
+    })
+  }
+
+  const onDropAfterEnter = (el) => {
+    el.style.height = 'auto'
+    el.style.transition = ''
+  }
+
+  const onDropLeave = (el) => {
+    el.style.height = el.scrollHeight + 'px'
+    el.style.opacity = '1'
+    void el.offsetHeight
+
+    el.style.transition = 'height 0.2s ease-out, opacity 0.2s ease-out'
+    el.style.height = '0px'
+    el.style.opacity = '0'
+  }
+
 </script>
 
 <style scoped>
@@ -183,18 +276,24 @@
     top: 0;
     left: 0;
     right: 0;
-    background: #fff;
     border-bottom: 1px solid #e6e6e6;
     z-index: 110;
   }
 
   .topbar-content{
+    position: relative;
     display: flex;
     align-items: center;
     width: 100%;
     height: 100%;
     box-sizing: border-box;
-    padding: 0 .75rem;
+    padding: 0.75rem;
+  }
+
+  .brand{
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
   }
 
   .logo{
@@ -203,18 +302,14 @@
     display: block;
   }
 
-  .spacer{
-    flex: 1 1 auto;
-  }
-
-  .actions-fixed{
+  .toolbar{
     position: absolute;
-    right: 8px;
+    left: 50%;
     top: 50%;
-    transform: translateY(-50%);
+    transform: translate(-50%, -50%);
     display: flex;
     align-items: center;
-    gap: .5rem;
+    gap: .75rem;
   }
 
   .icon-btn{ 
@@ -225,94 +320,146 @@
   }
 
   .icon{
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     display: block;
   }
 
-  .icon-btn:hover .icon, .show-crop-preview:hover p{
-    opacity: .75;
+  .icon-btn:hover .icon{
+    opacity: .7;
   }
 
-  .show-crop-preview{
-    margin-right: 40px;
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
+  .toolbar-btn{
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 2px 8px;
-    border-radius: 20px;
-    background-color: #e6e6e6;
+    gap: 6px;
+    line-height: 1;
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+
+  .scale-wrapper, .toolbar-btn {
+    padding: 4px 10px;
+    border-radius: 999px;
+    min-height: 30px;
+    box-sizing: border-box;
+  }
+
+  .toolbar-btn{
+    padding: 0px 10px;
+  }
+
+  .toolbar-btn span{
+    white-space: nowrap;
+  }
+
+  .toolbar-btn-ghost{
+    border-color: #e0e0e0;
+  }
+
+  .icon-eye{
+    width: 22px;
+    height: 22px;
+  }
+
+  .actions-group{
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .toolbar-divider{
+    width: 1px;
+    height: 18px;
+    background: #e0e0e0;
   }
 
   .scale-control {
     position: relative;
-    margin-left: 1rem;
+    display: inline-flex;
   }
 
   .scale-wrapper {
     display: flex;
     align-items: center;
-    gap: 0.25rem;
-    background: #f7f7f7;
+    gap: 0.35rem;
     border: 1px solid #ddd;
-    border-radius: 6px;
-    padding: 0.25rem 0.5rem;
     cursor: pointer;
   }
 
-  .scale-btn, .dropdown-btn {
+  .scale-btn,
+  .dropdown-btn {
     background: none;
     border: 0;
-    padding: 0.25rem 0.5rem;
+    padding: 0;
     cursor: pointer;
-    font-size: 16px;
     font-weight: 600;
     color: #333;
     display: flex;
     align-items: center;
     justify-content: center;
-    min-width: 24px;
+    padding: 0 5px;
   }
 
-  .scale-btn:hover, .dropdown-btn:hover {
+  .scale-btn:hover,
+  .dropdown-btn:hover {
     opacity: 0.7;
   }
 
+  .reset-100-btn {
+    background: none;
+    border: 0;
+    padding: 0 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 10px;
+  }
+
+  .reset-100-btn:hover .reset-icon {
+    opacity: .7;
+  }
+
+  .reset-icon {
+    width: 15px;
+    height: 15px;
+    display: block;
+  }
+
   .scale-input {
-    width: 60px;
+    width: 33px;
     border: 0;
     background: transparent;
     text-align: center;
-    font-size: 14px;
     font-weight: 600;
     outline: none;
     -moz-appearance: textfield;
   }
 
-  .scale-input::-webkit-outer-spin-button, .scale-input::-webkit-inner-spin-button {
+  .scale-input::-webkit-outer-spin-button,
+  .scale-input::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
   }
 
   .scale-unit {
-    font-size: 14px;
     font-weight: 600;
     color: #666;
   }
 
   .scale-dropdown {
     position: absolute;
-    top: calc(100% + 0.5rem);
+    top: calc(100% + 8px);
     left: 0;
-    background: white;
     border: 1px solid #ddd;
     border-radius: 6px;
     padding: 0.75rem;
+    background: white;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     z-index: 120;
-    min-width: 250px;
+    box-sizing: border-box;
+    overflow: hidden;
   }
 
   .dropdown-item {
@@ -322,7 +469,6 @@
   }
 
   .dropdown-item label {
-    font-size: 13px;
     font-weight: 500;
     color: #333;
     white-space: nowrap;
@@ -333,12 +479,12 @@
     padding: 0.25rem 0.5rem;
     border: 1px solid #ddd;
     border-radius: 4px;
-    font-size: 13px;
     outline: none;
     -moz-appearance: textfield;
   }
 
-  .ref-input::-webkit-outer-spin-button, .ref-input::-webkit-inner-spin-button {
+  .ref-input::-webkit-outer-spin-button,
+  .ref-input::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
   }
@@ -347,38 +493,18 @@
     border-color: #999;
   }
 
-  .dropdown-sep {
-    height: 1px;
-    background: #eee;
-    margin: .75rem 0;
-  }
-
   .dropdown-actions {
     display: flex;
-    gap: .5rem;
+    padding-top: 1rem;
+    gap: 0.5rem;
   }
 
   .ref-action {
     padding: .35rem .6rem;
     border: 1px solid #ddd;
     border-radius: 6px;
-    background: #fafafa;
+    color: white;
     cursor: pointer;
-    font-size: 13px;
-  }
-
-  .ref-action:hover {
-    background: #f0f0f0;
-  }
-
-  .ref-action.danger {
-    border-color: #f5c2c2;
-    color: #c00;
-    background: #fff6f6;
-  }
-
-  .ref-action.danger:hover {
-    background: #ffecec;
   }
 
   .warn-wrap {
@@ -389,11 +515,11 @@
   }
 
   .warn-badge {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     display: inline-block;
     vertical-align: middle;
-    cursor: default;
+    cursor: pointer;
   }
 
   .warn-tooltip {
@@ -404,7 +530,6 @@
     white-space: nowrap;
     background: #111;
     color: #fff;
-    font-size: 11px;
     line-height: 1;
     padding: 6px 8px;
     border-radius: 4px;

@@ -12,8 +12,10 @@
             @visible="onToggleCropVisible"
             @undo="onUndo"
             @reset="onReset"
+            @clear="onClear"
             @calibrate="onOpenCalibration"
             @clear-calibration="onClearCalibration"
+            @reset-to-100="onResetTo100"
         />
 
         <ImageDrop
@@ -39,6 +41,8 @@
             :export-suggested-name="exportName"
             :export-suggested-type="exportType"
             :top-gap="topGap"
+            :applied-grayscale-strength="lastGrayscaleStrength"
+            :applied-bg-color="lastBgColor"
             @download="onDownload"
             @clear="onClear"
             @crop="onCropToContent"
@@ -101,6 +105,8 @@
     const editingNow = ref(false)
     const sourceSig = ref(null)
     const isCalibrated = computed(() => calibrationBaseCssDpi.value != null)
+    const lastGrayscaleStrength = ref(null)
+    const lastBgColor = ref(null)
 
     function inferFormat(meta) {
         const name = (meta?.name || '').toLowerCase()
@@ -136,11 +142,15 @@
 
     function onUndo() {
         dropRef.value?.undo?.()
+        lastGrayscaleStrength.value = null
+        lastBgColor.value = null
         recordAction('undo')
     }
 
     function onReset() {
         dropRef.value?.resetToOriginal?.()
+        lastGrayscaleStrength.value = null
+        lastBgColor.value = null
         recordAction('reset')
     }
 
@@ -261,6 +271,7 @@
     function onRemoveBackground() {
         editingNow.value = true
         dropRef.value?.removeBackground?.()
+        lastBgColor.value = null
         scheduleExportRecalc(120)
         recordAction('remove_background')
     }
@@ -273,6 +284,10 @@
             bgColor.value = hex
             isTransparent.value = false
         }
+
+        if (!editingNow.value) {
+            lastBgColor.value = null
+        }
         scheduleExportRecalc()
     }
 
@@ -280,11 +295,12 @@
         editingNow.value = true
         dropRef.value?.endPreviewGrayscale()
         dropRef.value?.applyGrayscale(opts)
+        lastGrayscaleStrength.value = opts?.strength ?? null
         recordAction('grayscale_apply', opts || {})
     }
 
     function onHighlightArtifacts(color = '#00E5FF') {
-        const params = { diffThresh: 8, lowEdge: 25, highEdge: 100, dilate: 3 }
+        const params = { diffThresh: 1, lowEdge: 40, highEdge: 160, dilate: 0 }
         dropRef.value?.highlightJpegArtifacts(color, params)
         recordAction('highlight_artifacts')
     }
@@ -293,6 +309,7 @@
         editingNow.value = true
         dropRef.value?.endPreviewBackgroundColor()
         dropRef.value?.setBackgroundColor(color)
+        lastBgColor.value = color
         scheduleExportRecalc(120)
         recordAction('bgcolor_apply', { color })
     }
@@ -314,10 +331,13 @@
             analytics.setSourceFormat?.(fmt)
 
             initialDoc.value = {
-            name: meta?.name, type: meta?.type, size: meta?.size,
-            width: meta?.width, height: meta?.height,
-            pages: meta?.pages || 1, page: meta?.page || 1
+                name: meta?.name, type: meta?.type, size: meta?.size,
+                width: meta?.width, height: meta?.height,
+                pages: meta?.pages || 1, page: meta?.page || 1
             }
+
+            lastGrayscaleStrength.value = null
+            lastBgColor.value = null
         }
 
         if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastDocSig.value && !meta.noGallery) {
@@ -374,6 +394,8 @@
         exportType.value = null
         sourceSig.value = null
         showScale.value = false
+        lastGrayscaleStrength.value = null
+        lastBgColor.value = null
     }
 
     function onFixArtifacts() {
@@ -412,6 +434,10 @@
 
     function onReferenceWidthUpdate(newWidthMm) {
         dropRef.value?.setReferenceWidth?.(newWidthMm)
+    }
+
+    async function onResetTo100() {
+        await dropRef.value?.resetZoomTo100?.()
     }
 </script>
 
@@ -459,24 +485,5 @@
         height: 70%;
         max-height: 28px;
         display: block;
-    }
-
-    .tabs {
-        display: flex;
-        align-items: center;
-        gap: .25rem;
-    }
-
-    .tab {
-        border: 1px solid #ddd;
-        background: #f7f7f7;
-        padding: .2rem .5rem;
-        border-radius: 6px;
-        font-weight: 600;
-        cursor: pointer;
-    }
-
-    .tab.active {
-        background:#ececec;
     }
 </style>

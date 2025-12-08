@@ -98,7 +98,6 @@ export function useHistory({
         } else {
           emit('update:bgcolor', null)
         }
-        initPanzoom()
       }
       img.src = snap.dataUrl
     }

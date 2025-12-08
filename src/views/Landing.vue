@@ -8,8 +8,8 @@
 
         <main class="hero" :style="{ marginTop: topGap }">
             <section class="intro">
-                <h1>Quick image & PDF tweaks!</h1>
-                <p>
+                <h1 class="ty-headline-medium">Quick image & PDF tweaks!</h1>
+                <p class="ty-body-medium">
                     Drop or select a photo, screenshot, or PDF to change the background color, convert to grayscale,
                     crop or crop-to-content, then export to PNG, JPG, or PDF — right in your browser.
                 </p>
@@ -128,7 +128,6 @@
 
     .intro h1 {
         margin: 0 0 20px;
-        font-size: 28px;
         line-height: 1.2;
         color: #444;
     }
@@ -163,12 +162,7 @@
         color: #333;
     }
 
-    .dz-inner strong{
-        font-size: 16px;
-    }
-
     .dz-inner span{
-        font-size: 13px;
         color: #666;
     }
 </style>

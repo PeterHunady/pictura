@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument } from 'pdf-lib'
-import { canvasToBlob, dataURLtoU8, extOf } from '../utils/imageProcessing'
+import { canvasToBlob, extOf } from '../utils/imageProcessing'
 
 const { getDocument } = pdfjsLib
 
@@ -23,62 +23,161 @@ export function useExport({
   preview,
   originalFileName,
   maxW,
-  maxH
+  maxH,
 }) {
+  function hasOverlayBox() {
+    return overlayW.value > 0 && overlayH.value > 0
+  }
+
+  function getOverlayOnCanvas(canvas) {
+    if (!canvas || !canvas.width || !canvas.height) return null
+
+    const W = canvas.width
+    const H = canvas.height
+
+    if (!hasOverlayBox()) {
+      return { sx: 0, sy: 0, sw: W, sh: H }
+    }
+
+    let sx = overlayX.value
+    let sy = overlayY.value
+    let sw = overlayW.value
+    let sh = overlayH.value
+
+    if (sw <= 0 || sh <= 0) {
+      return { sx: 0, sy: 0, sw: W, sh: H }
+    }
+
+    if (sx < 0) {
+      sw += sx
+      sx = 0
+    }
+    if (sy < 0) {
+      sh += sy
+      sy = 0
+    }
+
+    if (sx + sw > W) {
+      sw = W - sx
+    }
+    if (sy + sh > H) {
+      sh = H - sy
+    }
+
+    sw = Math.max(1, Math.min(sw, W))
+    sh = Math.max(1, Math.min(sh, H))
+
+    return {
+      sx: Math.round(sx),
+      sy: Math.round(sy),
+      sw: Math.round(sw),
+      sh: Math.round(sh),
+    }
+  }
+  
+  async function getPdfPageAndCrop() {
+    const bytes = pdfBytes()
+    const srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+    const pages = srcDoc.getPages()
+
+    const idx = Math.max(
+      0,
+      Math.min(pages.length - 1, (currentPage?.value || 1) - 1),
+    )
+
+    const srcPage = pages[idx]
+    const { width: pageW, height: pageH } = srcPage.getSize()
+
+    if (!hasOverlayBox() || !pdfCanvas.value?.width) {
+      return {
+        srcDoc,
+        srcPage,
+        pageW,
+        pageH,
+        crop: { x: 0, y: 0, width: pageW, height: pageH },
+      }
+    }
+
+    const canvas = pdfCanvas.value
+    const scale =
+      pdfRenderScale.value || canvas.width / pageW || 1
+
+    const ov = getOverlayOnCanvas(canvas)
+    const boxW = ov.sw / scale
+    const boxH = ov.sh / scale
+    const x = ov.sx / scale
+    const yTop = ov.sy / scale
+
+    const y = pageH - (yTop + boxH)
+
+    let left = Math.max(0, Math.min(pageW, x))
+    let bottom = Math.max(0, Math.min(pageH, y))
+    let right = Math.max(left, Math.min(pageW, left + boxW))
+    let top = Math.max(bottom, Math.min(pageH, bottom + boxH))
+
+    const width = Math.max(1, right - left)
+    const height = Math.max(1, top - bottom)
+
+    return {
+      srcDoc,
+      srcPage,
+      pageW,
+      pageH,
+      crop: { x: left, y: bottom, width, height },
+    }
+  }
 
   async function estimateExport({ format = 'png' } = {}) {
     format = String(format || 'png').toLowerCase()
 
     if (isPdf.value) {
       if (format === 'pdf') {
-        const srcDoc = await PDFDocument.load(pdfBytes())
+        const { srcPage, crop } = await getPdfPageAndCrop()
         const outDoc = await PDFDocument.create()
 
-        const srcPage = srcDoc.getPages()[currentPage.value - 1]
-        const { width: pageW, height: pageH } = srcPage.getSize()
-
-        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-        const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
-
         const emb = await outDoc.embedPage(srcPage, {
-          left: x, bottom: y, right: x + width, top: y + height
+          left: crop.x,
+          bottom: crop.y,
+          right: crop.x + crop.width,
+          top: crop.y + crop.height,
         })
-        outDoc.addPage([width, height]).drawPage(emb, { x: 0, y: 0 })
+
+        outDoc.addPage([crop.width, crop.height]).drawPage(emb, { x: 0, y: 0 })
 
         const bytes = await outDoc.save()
-        const blob  = new Blob([bytes], { type: 'application/pdf' })
+        const blob = new Blob([bytes], { type: 'application/pdf' })
         return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
       }
 
       const src = getSourceCanvas()
       if (!src) return { blob: null, sizeBytes: 0, ext: format }
 
-      const sx = overlayW.value > 0 ? overlayX.value : 0
-      const sy = overlayH.value > 0 ? overlayY.value : 0
-      const sw = overlayW.value > 0 ? overlayW.value : src.width
-      const sh = overlayH.value > 0 ? overlayH.value : src.height
+      const ov = getOverlayOnCanvas(src)
+      const { sx, sy, sw, sh } = ov
 
       const c = document.createElement('canvas')
-      c.width = sw; c.height = sh
+      c.width = sw
+      c.height = sh
       c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh)
 
-      const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
-      const blob  = await canvasToBlob(c, mime)
-      const size  = blob ? blob.size : 0
+      const mime = format === 'jpg' ? 'image/jpeg' : 'image/png'
+      const blob = await canvasToBlob(c, mime)
+      const size = blob ? blob.size : 0
       return { blob, sizeBytes: size, ext: format, mime }
     }
 
     const img = imgEl.value
     if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
 
-    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-    const sx = hasOverlay ? overlayX.value : 0
-    const sy = hasOverlay ? overlayY.value : 0
-    const sw = hasOverlay ? overlayW.value : img.naturalWidth
-    const sh = hasOverlay ? overlayH.value : img.naturalHeight
+    const hasOv = overlayW.value > 0 && overlayH.value > 0
+    const sx = hasOv ? overlayX.value : 0
+    const sy = hasOv ? overlayY.value : 0
+    const sw = hasOv ? overlayW.value : img.naturalWidth
+    const sh = hasOv ? overlayH.value : img.naturalHeight
 
     const c = document.createElement('canvas')
-    c.width = sw; c.height = sh
+    c.width = sw
+    c.height = sh
     c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
 
     if (format === 'pdf') {
@@ -105,22 +204,21 @@ export function useExport({
           x: 0,
           y: 0,
           width: imgDims.width,
-          height: imgDims.height
+          height: imgDims.height,
         })
 
         const bytes = await outDoc.save()
         const blob = new Blob([bytes], { type: 'application/pdf' })
         return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
-
       } catch (error) {
         console.error('PDF creation error:', error)
         return { blob: null, sizeBytes: 0, ext: format }
       }
     }
 
-    const mime  = format === 'jpg' ? 'image/jpeg' : 'image/png'
-    const blob  = await canvasToBlob(c, mime)
-    const size  = blob ? blob.size : 0
+    const mime = format === 'jpg' ? 'image/jpeg' : 'image/png'
+    const blob = await canvasToBlob(c, mime)
+    const size = blob ? blob.size : 0
     return { blob, sizeBytes: size, ext: format, mime }
   }
 
@@ -132,24 +230,16 @@ export function useExport({
 
     if (isPdf.value) {
       if (format === 'pdf') {
-        const srcDoc = await PDFDocument.load(pdfBytes())
+        const { srcPage, crop } = await getPdfPageAndCrop()
         const outDoc = await PDFDocument.create()
-        const page = (await srcDoc.getPages())[currentPage.value - 1]
-        const { width: pageW, height: pageH } = page.getSize()
-        const hasOverlay = overlayW.value > 0 && overlayH.value > 0
 
-        let box
-        if (hasOverlay) {
-          const { x, y, width, height } = overlayBoxPdfCoords()
-          box = { x, y, w: width, h: height }
-        } else {
-          box = { x: 0, y: 0, w: pageW, h: pageH }
-        }
-
-        const embedded = await outDoc.embedPage(page, {
-          left: box.x, bottom: box.y, right: box.x + box.w, top: box.y + box.h,
+        const embedded = await outDoc.embedPage(srcPage, {
+          left: crop.x,
+          bottom: crop.y,
+          right: crop.x + crop.width,
+          top: crop.y + crop.height,
         })
-        outDoc.addPage([box.w, box.h]).drawPage(embedded, { x: 0, y: 0 })
+        outDoc.addPage([crop.width, crop.height]).drawPage(embedded, { x: 0, y: 0 })
 
         const bytes = await outDoc.save()
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
@@ -162,7 +252,8 @@ export function useExport({
 
       const vp1 = page.getViewport({ scale: 1 })
       const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const maxScaleByPixels =
+        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
       const scale = Math.min(dpiScale, maxScaleByPixels)
       const vp = page.getViewport({ scale })
 
@@ -171,17 +262,45 @@ export function useExport({
       off.height = Math.round(vp.height)
 
       await page.render({
-        canvasContext: off.getContext('2d', { willReadFrequently: true, alpha: true }),
+        canvasContext: off.getContext('2d', {
+          willReadFrequently: true,
+          alpha: true,
+        }),
         viewport: vp,
-        background: 'rgba(0,0,0,0)'
+        background: 'rgba(0, 0, 0, 0)',
       }).promise
 
-      const factor = (scale / (pdfRenderScale.value || 1))
-      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-      const ox = hasOverlay ? Math.round(overlayX.value * factor) : 0
-      const oy = hasOverlay ? Math.round(overlayY.value * factor) : 0
-      const ow = hasOverlay ? Math.round(overlayW.value * factor) : off.width
-      const oh = hasOverlay ? Math.round(overlayH.value * factor) : off.height
+      const factor = scale / (pdfRenderScale.value || 1)
+
+      const prevCanvas = pdfCanvas.value || off
+      const ovPrev = getOverlayOnCanvas(prevCanvas)
+
+      let ox, oy, ow, oh
+      if (!ovPrev) {
+        ox = 0
+        oy = 0
+        ow = off.width
+        oh = off.height
+      } else {
+        ox = Math.round(ovPrev.sx * factor)
+        oy = Math.round(ovPrev.sy * factor)
+        ow = Math.round(ovPrev.sw * factor)
+        oh = Math.round(ovPrev.sh * factor)
+
+        if (ox < 0) {
+          ow += ox
+          ox = 0
+        }
+        if (oy < 0) {
+          oh += oy
+          oy = 0
+        }
+        if (ox + ow > off.width) ow = off.width - ox
+        if (oy + oh > off.height) oh = off.height - oy
+
+        ow = Math.max(1, Math.min(ow, off.width))
+        oh = Math.max(1, Math.min(oh, off.height))
+      }
 
       const out = document.createElement('canvas')
       out.width = ow
@@ -192,10 +311,10 @@ export function useExport({
       let url
       if (format === 'png') {
         url = out.toDataURL('image/png')
-
       } else {
         const white = document.createElement('canvas')
-        white.width = ow; white.height = oh
+        white.width = ow
+        white.height = oh
         const wctx = white.getContext('2d')
         wctx.fillStyle = '#ffffff'
         wctx.fillRect(0, 0, ow, oh)
@@ -217,7 +336,8 @@ export function useExport({
     const h = hasOverlay ? overlayH.value : maxH.value
 
     const c = document.createElement('canvas')
-    c.width = w; c.height = h
+    c.width = w
+    c.height = h
     const ctx = c.getContext('2d')
 
     if (format === 'jpg') {
@@ -250,7 +370,7 @@ export function useExport({
           x: 0,
           y: 0,
           width: imgDims.width,
-          height: imgDims.height
+          height: imgDims.height,
         })
 
         const bytes = await outDoc.save()
@@ -267,7 +387,6 @@ export function useExport({
           document.body.removeChild(a)
           URL.revokeObjectURL(url)
         }, 100)
-
       } catch (error) {
         console.error('PDF export error:', error)
         alert('Failed to create PDF: ' + error.message)
@@ -275,36 +394,32 @@ export function useExport({
       return
     }
 
-    const url = (format === 'png')
-      ? c.toDataURL('image/png')
-      : c.toDataURL('image/jpeg', JPG_QUALITY)
+    const url =
+      format === 'png'
+        ? c.toDataURL('image/png')
+        : c.toDataURL('image/jpeg', JPG_QUALITY)
 
     triggerDownload(url, filename)
   }
 
   async function download() {
     if (isPdf.value) {
-      const srcDoc = await PDFDocument.load(pdfBytes())
+      const { srcPage, crop } = await getPdfPageAndCrop()
       const outDoc = await PDFDocument.create()
 
-      const pages = srcDoc.getPages()
-      const srcPage = pages[currentPage.value - 1]
-      const { width: pageW, height: pageH } = srcPage.getSize()
-
-      const hasOverlay = overlayW.value > 0 && overlayH.value > 0
-      const { x, y, width, height } = hasOverlay ? overlayBoxPdfCoords() : { x: 0, y: 0, width: pageW, height: pageH }
-
       const embedded = await outDoc.embedPage(srcPage, {
-        left: x,
-        bottom: y,
-        right: x + width,
-        top: y + height,
+        left: crop.x,
+        bottom: crop.y,
+        right: crop.x + crop.width,
+        top: crop.y + crop.height,
       })
 
-      outDoc.addPage([width, height]).drawPage(embedded, { x: 0, y: 0 })
+      outDoc.addPage([crop.width, crop.height]).drawPage(embedded, { x: 0, y: 0 })
 
       const bytes = await outDoc.save()
-      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+      const url = URL.createObjectURL(
+        new Blob([bytes], { type: 'application/pdf' }),
+      )
 
       const a = document.createElement('a')
       a.href = url
@@ -341,6 +456,6 @@ export function useExport({
   return {
     estimateExport,
     exportFile,
-    download
+    download,
   }
 }

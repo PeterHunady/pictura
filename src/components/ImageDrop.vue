@@ -10,7 +10,7 @@
     @drop.prevent="handleDrop"
     @click="openFilePicker"
   >
-    <p v-if="!preview">
+    <p v-if="!preview" class="ty-body-medium">
       Click or drag and drop an image or PDF here
     </p>
 
@@ -33,7 +33,7 @@
           class="preview-img"
           alt="Preview"
           draggable="false"
-          @load="initPanzoom"
+          @load="handleImageLoaded"
         />
 
         <img
@@ -71,20 +71,19 @@
     />
 
     <div v-if="calOpen" class="calib-backdrop" @click.self="closeCalibration">
-      <div class="calib-modal">
-        <h3>Screen Calibration</h3>
+      <div class="calib-modal bg-neutral100">
+        <h3 class="ty-title-medium">Screen Calibration</h3>
 
-        <!-- Line Calibration -->
         <div class="calib-method">
-          <h4>Ruler Method</h4>
-          <p>Measure the line below with a ruler and enter its length in millimeters.</p>
+          <h4 class="ty-body-medium">Ruler Method</h4>
+          <p class="ty-body-small">Measure the line below with a ruler and enter its length in millimeters.</p>
 
           <div class="calib-line-wrap">
             <div ref="calLineEl" class="calib-line"></div>
           </div>
 
           <div class="calib-controls">
-            <label>
+            <label class="ty-body-small">
               Measured length (mm):
               <input
                 type="number"
@@ -99,57 +98,55 @@
 
         <div class="calib-separator"></div>
 
-        <!-- Card Calibration -->
-        <div class="calib-method">
-          <h4>Credit Card Method</h4>
-          <p>Adjust the slider until the card below matches your real credit card size.</p>
-          <p class="card-info">Standard card size: 85.6 × 53.98 mm</p>
+          <div class="calib-method">
+            <h4 class="ty-body-medium">Credit Card Method</h4>
+            <p class="ty-body-small">Adjust the slider until the card below matches your real credit card size.</p>
+            <p class="card-info ty-body-small">Standard card size: 85.6 × 53.98 mm</p>
 
-          <div class="calib-card-wrap">
-            <img
-              ref="cardImageEl"
-              src="/src/assets/creditCard.png"
-              alt="Credit Card"
-              class="calib-card"
-              :style="{ width: cardSliderValue + '%' }"
-            />
-          </div>
+            <div class="calib-card-wrap">
+              <img
+                ref="cardImageEl"
+                src="/src/assets/creditCard.png"
+                alt="Credit Card"
+                class="calib-card"
+                :style="{ width: cardSliderValue + '%' }"
+              />
+            </div>
 
-          <div class="calib-slider-wrap">
-            <label>
-              Card Size:
-              <input
-                type="range"
-                v-model.number="cardSliderValue"
-                @input="syncLineFromCard"
-                min="30"
-                max="120"
-                step="1"
-                class="card-slider"
-              />
-              <input
-                type="number"
-                v-model.number="cardSliderValue"
-                @change="syncLineFromCard"
-                min="30"
-                max="120"
-                step="1"
-                class="slider-value-input"
-              />
-              <span class="percent-sign">%</span>
-            </label>
+            <div class="calib-slider-wrap">
+              <label class="ty-body-small">
+                Card Size:
+                <input
+                  type="range"
+                  v-model.number="cardSliderValue"
+                  @input="syncLineFromCard"
+                  min="30"
+                  max="120"
+                  step="1"
+                  class="card-slider"
+                />
+                <input
+                  type="number"
+                  v-model.number="cardSliderValue"
+                  @change="syncLineFromCard"
+                  min="30"
+                  max="120"
+                  step="1"
+                  class="slider-value-input ty-body-small"
+                />
+                <span class="percent-sign ty-body-small">%</span>
+              </label>
+            </div>
           </div>
-        </div>
 
         <div class="calib-controls-footer">
-          <button class="primary" @click="handleApplyCalibration">Apply</button>
-          <button class="cancel-btn" @click="closeCalibration">Cancel</button>
+          <button class="cancel-btn bg-red600 bg-hover-red500" @click="closeCalibration">Cancel</button>
+          <button class="primary bg-lime600 bg-hover-lime500" @click="handleApplyCalibration">Apply</button>
         </div>
 
         <p v-if="calError" class="calib-error">{{ calError }}</p>
       </div>
     </div>
-
   </div>
 </template>
 
@@ -240,7 +237,7 @@
     minScalePct,
     maxScalePct,
     highlightOn,
-    endPreviewBackgroundColor: endPreviewBackgroundColorWrapper
+    endPreviewBackgroundColor: endPreviewBackgroundColorWrapper,
   })
 
   const {
@@ -252,11 +249,43 @@
     adjustForContainerResize,
     disposePanzoom,
     getPanzoom,
-    initPanzoom: initPanzoomFromComposable
+    initPanzoom: initPanzoomFromComposable,
+    centerImage
   } = panzoomComposable
 
   const initPanzoom = initPanzoomFromComposable
   const initialScale = initialScaleFromComposable
+
+  const calibrationComposable = useCalibration({
+    screenDPI,
+    recomputeScaleBounds,
+    updateDisplayScale,
+    referenceWidthMm
+  })
+
+  const {
+    calOpen,
+    calibrationMode,
+    calMeasuredMm,
+    calLineEl,
+    calCssPx,
+    cardSliderValue,
+    cardImageEl,
+    CARD_WIDTH_MM,
+    calError,
+    calibrationBaseCssDpi,
+    openCalibration,
+    closeCalibration,
+    applyCalibration,
+    applyCardCalibration,
+    clearCalibration,
+    initCalibration,
+    detachCalibrationListeners,
+    getPageZoomSafe,
+    measureCalLinePx
+  } = calibrationComposable
+
+  const isCalibrated = computed(() => !!calibrationBaseCssDpi.value)
 
   const overlayComposable = useOverlay({
     emit,
@@ -292,6 +321,8 @@
   const overlayH = overlayHComp
   const overlayVisible = overlayVisibleComp
 
+  let detectBackgroundImpl = () => {}
+
   const historyComposable = useHistory({
     isPdf,
     preview,
@@ -305,7 +336,7 @@
     renderPdfPage,
     setupOverlay,
     setHasAlpha,
-    detectBackground: () => {},
+    detectBackground: () => detectBackgroundImpl(),
     initPanzoom,
     madeTransparentImg
   })
@@ -315,38 +346,37 @@
     undo,
     resetToOriginal,
     saveOriginalSnapshot,
-    makeSnapshot
+    makeSnapshot,
   } = historyComposable
 
-  const calibrationComposable = useCalibration({
-    screenDPI,
-    recomputeScaleBounds,
-    updateDisplayScale,
-    referenceWidthMm
-  })
-
-  const {
-    calOpen,
-    calibrationMode,
-    calMeasuredMm,
-    calLineEl,
-    calCssPx,
-    cardSliderValue,
-    cardImageEl,
-    CARD_WIDTH_MM,
-    calError,
-    openCalibration,
-    closeCalibration,
-    applyCalibration,
-    applyCardCalibration,
-    clearCalibration,
-    initCalibration,
-    detachCalibrationListeners,
-    getPageZoomSafe,
-    measureCalLinePx
-  } = calibrationComposable
-
   let isSyncing = false
+
+  async function handleImageLoaded() {
+    const pz = getPanzoom()
+    const savedScale = pz ? displayScale.value : null
+    const savedTransform = pz ? pz.getTransform() : null
+
+    await initPanzoom()
+    recomputeScaleBounds()
+
+    if (savedScale !== null && savedTransform !== null) {
+      await nextTick()
+      setDisplayScale(savedScale)
+      await nextTick()
+      const newPz = getPanzoom()
+      if (newPz) {
+        newPz.moveTo(savedTransform.x, savedTransform.y)
+      }
+    } else {
+      await resetZoomTo100()
+    }
+  }
+
+  async function resetZoomTo100() {
+    setDisplayScale(100)
+    await nextTick()
+    centerImage()
+  }
 
   function syncCardFromLine() {
     if (isSyncing) return
@@ -405,10 +435,24 @@
 
   function handleApplyCalibration() {
     applyCalibration(getPanzoom(), basePixelWidth, initialScale, panCont, displayScale)
+
+    if (calibrationBaseCssDpi.value) {
+      localStorage.setItem(CAL_KEY, String(calibrationBaseCssDpi.value))
+      localStorage.setItem(CARD_SLIDER_KEY, String(cardSliderValue.value))
+      localStorage.setItem(REF_WIDTH_KEY, String(referenceWidthMm.value))
+      localStorage.setItem('imageDrop.calConfirmedV2', '1')
+    }
   }
 
   function handleApplyCardCalibration() {
     applyCardCalibration(getPanzoom(), basePixelWidth, initialScale, panCont, displayScale)
+
+    if (calibrationBaseCssDpi.value) {
+      localStorage.setItem(CAL_KEY, String(calibrationBaseCssDpi.value))
+      localStorage.setItem(CARD_SLIDER_KEY, String(cardSliderValue.value))
+      localStorage.setItem(REF_WIDTH_KEY, String(referenceWidthMm.value))
+      localStorage.setItem('imageDrop.calConfirmedV2', '1')
+    }
   }
 
   const backgroundComposable = useBackground({
@@ -431,7 +475,8 @@
     pdfBytes,
     renderPdfPage,
     setHasAlpha,
-    pushHistory
+    pushHistory,
+    currentPage,
   })
 
   const {
@@ -446,6 +491,7 @@
   } = backgroundComposable
 
   endPreviewBackgroundColorFn = endPreviewBackgroundColor
+  detectBackgroundImpl = detectBackground
 
   const cropComposable = useCrop({
     isPdf,
@@ -469,7 +515,9 @@
     setHasAlpha,
     canvasHasAlpha,
     pushHistory,
-    showOverlay
+    showOverlay,
+    currentPage,
+    detectBackground,
   })
 
   const {
@@ -516,7 +564,8 @@
     suppressGalleryOnce,
     pdfBytes,
     renderPdfPage,
-    pushHistory
+    pushHistory,
+    currentPage,
   })
 
   const {
@@ -564,16 +613,6 @@
     disposePanzoom()
 
     document.removeEventListener('paste', handlePaste)
-  })
-
-  watch(() => props.rightGap, async () => {
-    await nextTick()
-    adjustForContainerResize()
-  })
-
-  watch(() => props.topGap, async () => {
-    await nextTick()
-    adjustForContainerResize()
   })
 
   function pdfBytes () {
@@ -737,11 +776,16 @@
 
     await nextTick()
     await renderPdfPage(1)
+    await resetZoomTo100()
     saveOriginalSnapshot()
   }
 
   async function renderPdfPage(pageNo = currentPage.value || 1, dpi = PDF_PREVIEW_DPI) {
     await nextTick()
+
+    const pz = getPanzoom()
+    const savedScale = pz ? displayScale.value : null
+    const savedTransform = pz ? pz.getTransform() : null
 
     const pdf = await getDocument({ data: pdfBytes() }).promise
     totalPages.value  = pdf.numPages
@@ -794,7 +838,16 @@
 
     await initPanzoom()
     recomputeScaleBounds()
-    updateDisplayScale()
+
+    if (savedScale !== null && savedTransform !== null) {
+      await nextTick()
+      setDisplayScale(savedScale)
+      await nextTick()
+      const newPz = getPanzoom()
+      if (newPz) {
+        newPz.moveTo(savedTransform.x, savedTransform.y)
+      }
+    }
   }
 
   async function setPdfPage(n) {
@@ -848,7 +901,16 @@
     initCalibration()
 
     ro = new ResizeObserver(() => adjustForContainerResize())
-    if (previewWrap.value) ro.observe(previewWrap.value)
+
+    watch(
+      () => previewWrap.value,
+      (el, oldEl) => {
+        if (!ro) return
+        if (oldEl) ro.unobserve(oldEl)
+        if (el) ro.observe(el)
+      },
+      { immediate: true }
+    )
 
     document.addEventListener('paste', handlePaste)
   })
@@ -889,6 +951,8 @@
     // Display scale
     setDisplayScale,
     setReferenceWidth,
+    centerImage,
+    resetZoomTo100,
 
     // Others
     clear,
@@ -908,6 +972,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
+    transition: padding-right 0.28s cubic-bezier(0.22, 0.61, 0.36, 1), margin-top 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
   }
 
   .dropField:hover {
@@ -1055,7 +1121,6 @@
   }
 
   .calib-modal{
-    background: #fff;
     border-radius: 10px;
     padding: 16px 18px;
     width: min(620px, 90vw);
@@ -1068,7 +1133,6 @@
   .calib-modal h3 {
     color: #000;
     margin: 0 0 16px;
-    font-size: 1.25rem;
   }
 
   .calib-modal p, .calib-modal small {
@@ -1082,13 +1146,11 @@
   .calib-method h4 {
     color: #000;
     margin: 0 0 8px;
-    font-size: 1rem;
-    font-weight: 600;
+    font-weight: 500;
   }
 
   .calib-method p {
     margin: 0 0 12px;
-    font-size: 14px;
   }
 
   .calib-separator {
@@ -1110,32 +1172,19 @@
     padding: .4rem .7rem;
     border: 0;
     border-radius: 6px;
-    background: #28a745;
     color: white;
     cursor: pointer;
-    font-size: 14px;
-  }
-
-  .calib-controls-footer .primary:hover {
-    background: #218838;
   }
 
   .cancel-btn {
     padding: .4rem .8rem;
     border-radius: 6px;
-    background: #e53935;
     cursor: pointer;
     border: none;
     color: white;
-    font-size: 14px;
-  }
-
-  .cancel-btn:hover {
-    background: #d32f2f;
   }
 
   .card-info {
-    font-size: 12px !important;
     color: #666 !important;
     margin: 4px 0 12px !important;
   }
@@ -1146,7 +1195,6 @@
     justify-content: center;
     margin: 20px 0;
     padding: 20px;
-    background: #f5f5f5;
     border-radius: 8px;
     min-height: 150px;
   }
@@ -1167,7 +1215,6 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    font-size: 14px;
     color: #333;
   }
 
@@ -1186,7 +1233,6 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #28a745;
     cursor: pointer;
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
   }
@@ -1195,7 +1241,6 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #28a745;
     cursor: pointer;
     border: none;
     box-shadow: 0 2px 4px rgba(0,0,0,0.2);
@@ -1214,7 +1259,6 @@
     border: 1px solid #ddd;
     border-radius: 4px;
     text-align: center;
-    font-size: 14px;
     font-weight: 600;
     color: #28a745;
   }
@@ -1265,7 +1309,6 @@
     padding: .4rem .7rem;
     border: 0;
     border-radius: 6px;
-    background: #28a745;
     color: white; 
     cursor: pointer;
   }
@@ -1273,7 +1316,6 @@
   .calib-controls button:not(.primary){
     padding: .35rem .6rem;
     border-radius: 6px; 
-    background: #e53935;
     cursor: pointer;
     border: none;
     color: white;

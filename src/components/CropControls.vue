@@ -1,51 +1,62 @@
 <template>
   <div class="resize">
-    <button class="resize-toggle" @click="collapsed = !collapsed">
-      <span>Crop Image</span>
-      <span :class="collapsed ? 'arrow-right' : 'arrow-down'"></span>
+    <button class="resize-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
+      <span class="resize-toggle-left">
+        <img :src="cropIcon" alt="Crop image" class="toggle-icon" />
+        <span class="resize-label ty-title-medium">Crop image</span>
+      </span>
+      <span :class="!isOpen ? 'arrow-right' : 'arrow-down'"></span>
     </button>
 
-    <div v-show="!collapsed" class="resize-list">
-      <div class="resize-fields" v-if="meta">
-        <div class="input-row">
+    <transition
+      name="accordion"
+      @enter="onEnter"
+      @after-enter="onAfterEnter"
+      @leave="onLeave"
+    >
+      <div v-show="isOpen" class="slide-wrapper">
+        <div class="resize-list">
+          <div class="resize-fields" v-if="meta">
+            <div class="input-row">
+              <div class="input-group ty-body-medium">
+                <p>Width: {{ w }}</p>
+              </div>
 
-          <div class="input-group">
-            <p>Width: {{ w }}</p>
+              <div class="input-group ty-body-medium">
+                <p>Height: {{ h }}</p>
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button class="crop-btn ty-body-small bg-blue600" @click="emit('crop')">
+                Crop to Content
+              </button>
+              <button class="apply-btn ty-body-small bg-lime600" @click="onApply">
+                Apply
+              </button>
+            </div>
           </div>
 
-          <div class="input-group">
-            <p>Height: {{ h }}</p>
-          </div>
+          <p v-else class="no-image">No image loaded.</p>
         </div>
-
-        <div class="button-row">
-          <button class="crop-btn" @click="emit('crop')">
-            Crop to Content
-          </button>
-          <button class="apply-btn" @click="onApply">
-            Apply
-          </button>
-        </div>
-
       </div>
-
-      <p v-else class="no-image">No image loaded.</p>
-    </div>
+    </transition>
   </div>
 </template>
 
 <script setup>
   import { ref, watch } from 'vue'
+  import cropIcon from '@/assets/crop.svg'
 
   const props = defineProps({
     meta: Object,
-    initialSize: Object
+    initialSize: Object,
+    isOpen: { type: Boolean, default: false }
   })
 
-  const emit = defineEmits(['crop','preview','apply'])
+  const emit = defineEmits(['crop','preview','apply','toggle'])
   const w = ref(0)
   const h = ref(0)
-  const collapsed = ref(true)
 
   watch(() => props.meta, m => {
       w.value = m?.width  ? Math.round(m.width)  : 0
@@ -71,6 +82,34 @@
       emit('apply', { width: w.value, height: h.value })
     }
   }
+
+  const onEnter = (el) => {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+
+    const target = el.scrollHeight
+
+    requestAnimationFrame(() => {
+      el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
+      el.style.height = target + 'px'
+      el.style.opacity = '1'
+    })
+  }
+
+  const onAfterEnter = (el) => {
+    el.style.height = 'auto'
+    el.style.transition = ''
+  }
+
+  const onLeave = (el) => {
+    el.style.height = el.scrollHeight + 'px'
+    el.style.opacity = '1'
+    void el.offsetHeight
+
+    el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
+    el.style.height = '0px'
+    el.style.opacity = '0'
+  }
 </script>
 
 <style scoped>
@@ -85,7 +124,6 @@
   .resize-toggle {
     width: 100%;
     padding: 0.7rem;
-    background: rgba(0,0,0,0.05);
     border: none;
     font-weight: bold;
     display: flex;
@@ -94,8 +132,16 @@
     cursor: pointer;
   }
 
-  .resize-toggle span {
-    font-size: 24px;
+  .resize-toggle-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .toggle-icon {
+    width: 22px;
+    height: 22px;
+    display: block;
   }
 
   .arrow-right, .arrow-down {
@@ -116,13 +162,17 @@
     border-top: 8px solid #333;
   }
 
+  .slide-wrapper {
+    overflow: hidden;
+  }
+
   .resize-list {
-    padding: 0.5rem;
+    padding: 0.75rem;
+    padding-top: 1rem;
   }
 
   .resize-fields {
     width: 100%;
-    margin: 1rem 0;
   }
 
   .input-row {
@@ -136,12 +186,12 @@
     display: flex;
     flex-direction: column;
   }
-  
+    
   .input-group label {
     margin-bottom: 0.25rem;
     font-weight: 600;
   }
-  
+    
   .input-group input {
     width: 100%;
     padding: 0.3rem;
@@ -150,29 +200,23 @@
 
   .button-row {
     display: flex;
-    gap: 1rem;
+    gap: 0.75rem;
   }
 
   .button-row button {
     flex: 1;
-    padding: 0.6rem;
+    padding: 0.5rem;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
     font-weight: 600;
   }
 
   .crop-btn {
-    background: #007bff;
     color: #fff;
   }
 
-  .crop-btn:hover {
-    background: #0056b3;
-  }
-
   .apply-btn {
-    background: #28a745;
     color: #fff;
   }
 

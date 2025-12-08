@@ -1,17 +1,9 @@
-/**
- * JPEG Artifacts Composable
- * Handles JPEG artifact detection and removal
- */
-
 import { ref } from 'vue'
 import { bilateralOnceRGB, sobelMag, dilate1px, gaussianBlur } from '../utils/imageProcessing'
 
 export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, preview, emit, imgEl }) {
   const highlightOn = ref(false)
 
-  /**
-   * Highlight JPEG artifacts
-   */
   function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
     if (highlightOn.value) {
       clearHighlights(); return
@@ -57,7 +49,8 @@ export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, pre
     const mask = new Uint8Array(W * H)
     for (let i = 0, j = 0; i < S.length; i += 4, j++) {
       const d = (Math.abs(S[i] - B[i]) + Math.abs(S[i + 1] - B[i + 1]) + Math.abs(S[i + 2] - B[i + 2])) / 3
-      if (d > diffThresh && nearDil[j] && !core[j]) {
+      const gVal = G[j]
+      if (d > diffThresh && nearDil[j] && !core[j] && gVal < 50) {
         mask[j] = 1
       }
     }
@@ -86,10 +79,8 @@ export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, pre
     highlightOn.value = true
   }
 
-  /**
-   * Fix JPEG artifacts
-   */
   function fixJpegArtifacts() {
+    clearHighlights()
     pushHistory()
     const img = imgEl.value;
     if (!img?.naturalWidth) {
@@ -165,7 +156,7 @@ export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, pre
     const finalImg = ctx.createImageData(W, H);
     const F = finalImg.data;
     const M = dst0.data;
-    const amount = 1.2;
+    const amount = 1.5;
 
     for (let i = 0; i < M.length; i += 4) {
       for (let c = 0; c < 3; c++) {
@@ -182,9 +173,6 @@ export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, pre
     emit('update:preview', newSrc);
   }
 
-  /**
-   * Clear artifact highlights
-   */
   function clearHighlights() {
     const mc = markCanvas.value; if (!mc) return
     mc.getContext('2d').clearRect(0, 0, mc.width, mc.height)

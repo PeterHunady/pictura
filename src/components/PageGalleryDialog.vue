@@ -2,8 +2,8 @@
   <div class="backdrop" @click.self="$emit('cancel')">
     <div class="modal">
       <div class="hdr">
-        <h3>Choose a page</h3>
-        <div class="hint">{{ pages }} pages</div>
+        <h3 class="ty-title-large">Choose a page</h3>
+        <div class="hint ty-body-medium">{{ pages }} pages</div>
       </div>
 
       <div class="grid">
@@ -20,13 +20,13 @@
             <img v-else class="img" :src="thumbs[p]" :alt="`Page ${p}`" draggable="false" />
           </div>
 
-          <span class="badge">#{{ p }}</span>
+          <span class="badge ty-body-small">#{{ p }}</span>
         </button>
       </div>
 
       <div class="actions">
-        <button class="ghost" @click="$emit('cancel')">Cancel</button>
-        <button class="primary" :disabled="!localSel" @click="confirm">Select</button>
+        <button class="ghost ty-body-small" @click="$emit('cancel')">Cancel</button>
+        <button class="primary ty-body-small" :disabled="!localSel" @click="confirm">Select</button>
       </div>
     </div>
   </div>
@@ -125,7 +125,6 @@
 
     .hint {
         color: #666;
-        font-size: .9rem;
     }
 
     .grid {
@@ -191,7 +190,6 @@
         left: 8px;
         background: rgba(0,0,0,.7);
         color: #fff;
-        font-size: .75rem;
         border-radius: 999px;
         padding: .15rem .5rem;
     }

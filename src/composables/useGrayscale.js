@@ -20,7 +20,8 @@ export function useGrayscale({
   suppressGalleryOnce,
   pdfBytes,
   renderPdfPage,
-  pushHistory
+  pushHistory,
+  currentPage
 }) {
   const previewOn = ref(false)
   const previewType = ref(null)
@@ -37,9 +38,6 @@ export function useGrayscale({
     previewOn.value = true
   }
 
-  /**
-   * End grayscale preview
-   */
   function endPreviewGrayscale() {
     const node = isPdf.value ? pdfCanvas.value : imgEl.value
     if (node) {
@@ -79,46 +77,69 @@ export function useGrayscale({
 
     if (isPdf.value) {
       suppressGalleryOnce.value = true
-      const pdf = await getDocument({ data: pdfBytes() }).promise
+
+      const srcDoc = await PDFDocument.load(pdfBytes(), { ignoreEncryption: true })
       const outDoc = await PDFDocument.create()
+      const pages = srcDoc.getPages()
 
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p)
+      const totalPages = pages.length
+      const activeIndex = Math.max(
+        0,
+        Math.min(totalPages - 1, (currentPage.value || 1) - 1)
+      )
 
-        const vp1 = page.getViewport({ scale: 1 })
-        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
-        const scale = Math.min(dpiScale, maxScaleByPixels)
-        const vp = page.getViewport({ scale })
+      const pdfJs = await getDocument({ data: pdfBytes() }).promise
+      const jsPage = await pdfJs.getPage(activeIndex + 1)
 
-        const off = document.createElement('canvas')
-        off.width = Math.round(vp.width)
-        off.height = Math.round(vp.height)
+      const vp1 = jsPage.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
+      const maxScaleByPixels =
+        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const scale = Math.min(dpiScale, maxScaleByPixels)
+      const vp = jsPage.getViewport({ scale })
 
-        await page.render({
-          canvasContext: off.getContext('2d', { willReadFrequently: true }),
-          viewport: vp,
-          background: 'rgba(0,0,0,0)'
-        }).promise
+      const off = document.createElement('canvas')
+      off.width = Math.round(vp.width)
+      off.height = Math.round(vp.height)
 
-        grayscaleCanvas(off, strength, mode)
+      await jsPage.render({
+        canvasContext: off.getContext('2d', { willReadFrequently: true }),
+        viewport: vp,
+        background: 'rgba(0,0,0,0)'
+      }).promise
 
-        const pngBytes = dataURLtoU8(off.toDataURL('image/png'))
-        const pngImg = await outDoc.embedPng(pngBytes)
-        const wPt = vp1.width
-        const hPt = vp1.height
-        const outPage = outDoc.addPage([wPt, hPt])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
+      grayscaleCanvas(off, strength, mode)
+
+      const pngBytes = dataURLtoU8(off.toDataURL('image/png'))
+      const pngImg = await outDoc.embedPng(pngBytes)
+
+      for (let i = 0; i < totalPages; i++) {
+        if (i === activeIndex) {
+          const { width: pageW, height: pageH } = pages[i].getSize()
+          const outPage = outDoc.addPage([pageW, pageH])
+
+          outPage.drawImage(pngImg, {
+            x: 0,
+            y: 0,
+            width: pageW,
+            height: pageH
+          })
+        } else {
+          const [copied] = await outDoc.copyPages(srcDoc, [i])
+          outDoc.addPage(copied)
+        }
       }
 
       const newBytes = await outDoc.save()
       originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
+      preview.value = URL.createObjectURL(
+        new Blob([newBytes], { type: 'application/pdf' })
+      )
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
       emit('update:preview', preview.value)
-      await renderPdfPage()
+      await renderPdfPage(currentPage.value)
       return
     }
 
@@ -146,6 +167,7 @@ export function useGrayscale({
       lastModified: Date.now()
     })
   }
+
 
   return {
     previewOn,
