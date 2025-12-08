@@ -68,7 +68,7 @@
 
 <script setup>
   import { ref, watch, computed, onBeforeUnmount } from 'vue'
-  import backgroundIcon from '@/assets/BackgroundColor.svg'
+  import backgroundIcon from '@/assets/backgroundColor.svg'
 
   const props = defineProps({
     initialColor: { type: String, default: '#ffffff' },
@@ -96,7 +96,7 @@
     if (m6) return `#${m6[1].toLowerCase()}`
 
     const m3 = s.match(/^#?([0-9a-fA-F]{3})$/)
-    
+
     if (m3) {
       return (
         '#' +
