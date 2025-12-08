@@ -1223,7 +1223,6 @@
     height: 6px;
     border-radius: 3px;
     outline: none;
-    -webkit-appearance: none;
     background: linear-gradient(to right, #ddd 0%, #28a745 50%, #ddd 100%);
   }
 
