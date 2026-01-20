@@ -34,7 +34,7 @@
             </button>
           </div>
 
-          <p v-else class="no-image ty-body-medium">No image loaded.</p>
+          <p v-else class="no-image">No image loaded.</p>
         </div>
       </div>
     </transition>

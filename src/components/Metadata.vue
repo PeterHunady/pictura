@@ -128,7 +128,7 @@
   }
 
   .no-meta {
-    padding: 1rem 0.75rem;
+    padding: 1.4rem;
     font-style: italic;
     color: #666;
   }

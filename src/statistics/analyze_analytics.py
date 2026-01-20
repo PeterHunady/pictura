@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from datetime import datetime
 
 
 def load_ndjson(path: Path) -> pd.DataFrame:
@@ -44,6 +45,18 @@ def explode_actions(df: pd.DataFrame) -> pd.DataFrame:
     return ex[["session_id", "t"]]
 
 
+def extract_timestamp(row):
+    if "timestamp" in row and row["timestamp"]:
+        return row["timestamp"]
+
+    if "actions" in row and isinstance(row["actions"], list) and len(row["actions"]) > 0:
+        first_action = row["actions"][0]
+        if isinstance(first_action, dict) and "ts" in first_action:
+            return first_action["ts"] / 1000
+
+    return None
+
+
 def make_plots(df: pd.DataFrame, outdir: Path):
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -72,12 +85,34 @@ def make_plots(df: pd.DataFrame, outdir: Path):
 
             plt.figure()
             plt.hist(aps, bins=bins, edgecolor=None)
-            plt.title("Actions per session (integer bins)")
+            plt.title("Actions per session")
             plt.xlabel("Actions")
             plt.ylabel("Sessions")
             plt.xticks(np.arange(min_k, max_k + 1, 1))
             plt.tight_layout()
             plt.savefig(outdir / "actions_per_session.png", dpi=150)
+            plt.close()
+
+    df_with_ts = df.copy()
+    df_with_ts["ts"] = df_with_ts.apply(extract_timestamp, axis=1)
+    df_with_ts = df_with_ts[df_with_ts["ts"].notna()].copy()
+
+    if not df_with_ts.empty:
+        df_with_ts["date"] = pd.to_datetime(df_with_ts["ts"], unit="s")
+        df_with_ts["month"] = df_with_ts["date"].dt.to_period("M")
+        df_with_ts["action_count"] = df_with_ts["actions"].map(lambda a: len(a) if isinstance(a, list) else 0)
+
+        monthly_actions = df_with_ts.groupby("month")["action_count"].sum().sort_index()
+
+        if len(monthly_actions) > 0:
+            plt.figure(figsize=(10, 6))
+            monthly_actions.plot(kind="bar")
+            plt.title("Actions per Month")
+            plt.xlabel("Month")
+            plt.ylabel("Total Actions")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.savefig(outdir / "actions_per_month.png", dpi=150)
             plt.close()
 
 
@@ -93,9 +128,43 @@ def main():
         return
 
     df = load_ndjson(path)
-    print(f"Loaded {len(df)} session records")
+
+    # Statistics
+    total_sessions = len(df)
+    unique_users = df["session_id"].nunique() if "session_id" in df.columns else 0
+
+    print(f"\n=== Analytics Summary ===")
+    print(f"Total sessions: {total_sessions}")
+    print(f"Unique users (unique session_id): {unique_users}")
+
+    if "actions" in df.columns and not df.empty:
+        total_actions = df["actions"].map(lambda a: len(a) if isinstance(a, list) else 0).sum()
+        avg_actions = total_actions / total_sessions if total_sessions > 0 else 0
+        print(f"Total actions: {int(total_actions)}")
+        print(f"Average actions per session: {avg_actions:.2f}")
+
+    df_with_ts = df.copy()
+    df_with_ts["ts"] = df_with_ts.apply(extract_timestamp, axis=1)
+    df_with_ts = df_with_ts[df_with_ts["ts"].notna()].copy()
+
+    if not df_with_ts.empty:
+        df_with_ts["date"] = pd.to_datetime(df_with_ts["ts"], unit="s")
+        df_with_ts["month"] = df_with_ts["date"].dt.to_period("M")
+        df_with_ts["action_count"] = df_with_ts["actions"].map(lambda a: len(a) if isinstance(a, list) else 0)
+
+        monthly_actions = df_with_ts.groupby("month")["action_count"].sum().sort_index()
+
+        if len(monthly_actions) > 0:
+            print(f"\n=== Monthly Activity ===")
+            for month, count in monthly_actions.items():
+                print(f"{month}: {int(count)} actions")
+
+            most_active = monthly_actions.idxmax()
+            print(f"\nMost active month: {most_active} ({int(monthly_actions[most_active])} actions)")
+
+    print(f"\nGenerating charts...")
     make_plots(df, Path(args.out))
-    print(f"Charts written to {args.out}/\n - actions_distribution.png\n - actions_per_session_hist.png")
+    print(f"Charts written to {args.out}/\n - actions_types.png\n - actions_per_session.png\n - actions_per_month.png")
 
 
 if __name__ == "__main__":
