@@ -200,6 +200,7 @@
     if (previewTimer) {
       clearTimeout(previewTimer)
     }
+    
     emit('end-preview-color')
   })
 
