@@ -1,4 +1,6 @@
 const ENDPOINT = "https://visiontrainings.endora.site/collect/";
+const SESSION_COOKIE_NAME = "analytics_session_id";
+const SESSION_COOKIE_DAYS = 30;
 
 let state = {
   sessionId: null,
@@ -16,6 +18,20 @@ function uuidv4() {
     const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+function getCookie(name) {
+  const cookies = document.cookie.split(';');
+  for (const cookie of cookies) {
+    const [key, value] = cookie.trim().split('=');
+    if (key === name) return decodeURIComponent(value);
+  }
+  return null;
+}
+
+function setCookie(name, value, days) {
+  const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
 }
 
 function normalizeFmt(fmt) {
@@ -39,7 +55,14 @@ export function hasActive() { return isActive(); }
 
 export function startSession() {
   if (isActive()) return state.sessionId;
-  state.sessionId = uuidv4();
+
+  let sessionId = getCookie(SESSION_COOKIE_NAME);
+  if (!sessionId) {
+    sessionId = uuidv4();
+    setCookie(SESSION_COOKIE_NAME, sessionId, SESSION_COOKIE_DAYS);
+  }
+
+  state.sessionId = sessionId;
   state.closed = false;
   state.actions = [];
   return state.sessionId;

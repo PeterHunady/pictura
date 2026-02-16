@@ -155,9 +155,9 @@ export function useBackground({
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    // Use flood-fill to find background pixels connected to edges
     const bgMask = new Uint8Array(width * height)
-    const TOLERANCE_SQ = 2500 // Color distance threshold squared (about 50 per channel)
+    const TOLERANCE_SQ = 2500
+    const STRICT_TOLERANCE_SQ = 300
 
     const distSqToBg = (r, g, b) => {
       const dr = r - bgRGB.r
@@ -171,14 +171,21 @@ export function useBackground({
       const g = data[idx + 1]
       const b = data[idx + 2]
       const a = data[idx + 3]
-      if (a < 10) return true // Already transparent
+      if (a < 10) return true
       return distSqToBg(r, g, b) <= TOLERANCE_SQ
     }
 
-    // Flood fill from edges
+    const isStrictBgColor = (idx) => {
+      const r = data[idx]
+      const g = data[idx + 1]
+      const b = data[idx + 2]
+      const a = data[idx + 3]
+      if (a < 10) return true
+      return distSqToBg(r, g, b) <= STRICT_TOLERANCE_SQ
+    }
+
     const queue = []
 
-    // Add edge pixels to queue
     for (let x = 0; x < width; x++) {
       const topIdx = x * 4
       const bottomIdx = ((height - 1) * width + x) * 4
@@ -207,7 +214,6 @@ export function useBackground({
       }
     }
 
-    // BFS flood fill
     while (queue.length > 0) {
       const pix = queue.shift()
       const x = pix % width
@@ -232,17 +238,25 @@ export function useBackground({
       }
     }
 
-    // Apply transparency only to background pixels (connected to edges)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pix = y * width + x
+        if (bgMask[pix]) continue
+        const idx = pix * 4
+        if (isStrictBgColor(idx)) {
+          bgMask[pix] = 1
+        }
+      }
+    }
+
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const pix = y * width + x
         const idx = pix * 4
 
         if (bgMask[pix]) {
-          // This pixel is part of connected background - make transparent
           data[idx + 3] = 0
         }
-        // Non-background pixels keep their original color and alpha
       }
     }
 
@@ -725,6 +739,16 @@ export function useBackground({
   }
 
 
+  function clearBackgroundState() {
+    transparentBase.value = null
+    previewOn.value = false
+    previewType.value = null
+    if (previewImg.value) {
+      previewImg.value.src = ''
+      previewImg.value.style.backgroundColor = ''
+    }
+  }
+
   return {
     previewImg,
     previewOn,
@@ -734,5 +758,6 @@ export function useBackground({
     previewBackgroundColor,
     endPreviewBackgroundColor,
     setBackgroundColor,
+    clearBackgroundState,
   }
 }

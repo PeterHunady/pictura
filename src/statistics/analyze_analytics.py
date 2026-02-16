@@ -60,16 +60,26 @@ def extract_timestamp(row):
 def make_plots(df: pd.DataFrame, outdir: Path):
     outdir.mkdir(parents=True, exist_ok=True)
 
+    # Common style settings
+    BAR_COLOR = "#1f77b4"
+    FIGSIZE = (10, 6)
+    TITLE_FONTSIZE = 14
+    LABEL_FONTSIZE = 12
+    TICK_FONTSIZE = 10
+    ROTATION = 45
+
     actions_df = explode_actions(df)
     if not actions_df.empty:
         filtered = actions_df[actions_df["t"] != "export"]
         if not filtered.empty:
             counts = filtered.groupby("t").size().sort_values(ascending=False)
-            plt.figure()
-            counts.plot(kind="bar")
-            plt.title("Actions")
-            plt.xlabel("Action type")
-            plt.ylabel("Count")
+            plt.figure(figsize=FIGSIZE)
+            counts.plot(kind="bar", color=BAR_COLOR)
+            plt.title("Actions", fontsize=TITLE_FONTSIZE)
+            plt.xlabel("Action type", fontsize=LABEL_FONTSIZE)
+            plt.ylabel("Count", fontsize=LABEL_FONTSIZE)
+            plt.xticks(rotation=60, fontsize=TICK_FONTSIZE)
+            plt.yticks(fontsize=TICK_FONTSIZE)
             plt.tight_layout()
             plt.savefig(outdir / "actions_types.png", dpi=150)
             plt.close()
@@ -83,12 +93,13 @@ def make_plots(df: pd.DataFrame, outdir: Path):
 
             bins = np.arange(min_k - 0.5, max_k + 1.5, 1.0)
 
-            plt.figure()
-            plt.hist(aps, bins=bins, edgecolor=None)
-            plt.title("Actions per session")
-            plt.xlabel("Actions")
-            plt.ylabel("Sessions")
-            plt.xticks(np.arange(min_k, max_k + 1, 1))
+            plt.figure(figsize=FIGSIZE)
+            plt.hist(aps, bins=bins, edgecolor=None, color=BAR_COLOR)
+            plt.title("Actions per session", fontsize=TITLE_FONTSIZE)
+            plt.xlabel("Actions", fontsize=LABEL_FONTSIZE)
+            plt.ylabel("Sessions", fontsize=LABEL_FONTSIZE)
+            plt.xticks(np.arange(min_k, max_k + 1, 1), rotation=0, fontsize=TICK_FONTSIZE)
+            plt.yticks(fontsize=TICK_FONTSIZE)
             plt.tight_layout()
             plt.savefig(outdir / "actions_per_session.png", dpi=150)
             plt.close()
@@ -106,22 +117,24 @@ def make_plots(df: pd.DataFrame, outdir: Path):
         monthly_users = df_with_ts.groupby("month")["session_id"].nunique().sort_index()
 
         if len(monthly_actions) > 0:
-            plt.figure(figsize=(10, 6))
-            monthly_actions.plot(kind="bar")
-            plt.title("Actions per month")
-            plt.xlabel("Month")
-            plt.ylabel("Total Actions")
-            plt.xticks(rotation=45)
+            plt.figure(figsize=FIGSIZE)
+            monthly_actions.plot(kind="bar", color=BAR_COLOR)
+            plt.title("Actions per month", fontsize=TITLE_FONTSIZE)
+            plt.xlabel("Month", fontsize=LABEL_FONTSIZE)
+            plt.ylabel("Total Actions", fontsize=LABEL_FONTSIZE)
+            plt.xticks(rotation=ROTATION, fontsize=TICK_FONTSIZE)
+            plt.yticks(fontsize=TICK_FONTSIZE)
             plt.tight_layout()
             plt.savefig(outdir / "actions_per_month.png", dpi=150)
             plt.close()
 
-            plt.figure(figsize=(10, 6))
-            monthly_users.plot(kind="bar")
-            plt.title("Users per Month")
-            plt.xlabel("Month")
-            plt.ylabel("Users")
-            plt.xticks(rotation=45)
+            plt.figure(figsize=FIGSIZE)
+            monthly_users.plot(kind="bar", color=BAR_COLOR)
+            plt.title("Users per Month", fontsize=TITLE_FONTSIZE)
+            plt.xlabel("Month", fontsize=LABEL_FONTSIZE)
+            plt.ylabel("Users", fontsize=LABEL_FONTSIZE)
+            plt.xticks(rotation=ROTATION, fontsize=TICK_FONTSIZE)
+            plt.yticks(fontsize=TICK_FONTSIZE)
             plt.tight_layout()
             plt.savefig(outdir / "users_per_month.png", dpi=150)
             plt.close()

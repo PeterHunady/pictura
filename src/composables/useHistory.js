@@ -156,6 +156,12 @@ export function useHistory({
     history.length = 0
   }
 
+  function clearHistory() {
+    history.length = 0
+    future.length = 0
+    origSnapshot.value = null
+  }
+
   return {
     history,
     future,
@@ -166,5 +172,6 @@ export function useHistory({
     resetToOriginal,
     saveOriginalSnapshot,
     makeSnapshot,
+    clearHistory,
   }
 }

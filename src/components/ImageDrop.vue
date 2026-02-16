@@ -394,6 +394,7 @@
     resetToOriginal,
     saveOriginalSnapshot,
     makeSnapshot,
+    clearHistory,
   } = historyComposable
 
   let isSyncing = false
@@ -543,7 +544,8 @@
     removeBackground,
     previewBackgroundColor,
     endPreviewBackgroundColor,
-    setBackgroundColor
+    setBackgroundColor,
+    clearBackgroundState
   } = backgroundComposable
 
   endPreviewBackgroundColorFn = endPreviewBackgroundColor
@@ -581,7 +583,6 @@
     cropToOverlay
   } = cropComposable
 
-  // Blur tool composable
   const blurComposable = useBlur({
     isPdf,
     imgEl,
@@ -611,7 +612,6 @@
 
   setupBlurWatchers()
 
-  // Mark tool composable
   const markComposable = useMark({
     isPdf,
     imgEl,
@@ -643,7 +643,6 @@
 
   setupMarkWatchers()
 
-  // Unified live tool handlers
   function onLiveToolPointerDown(e) {
     if (blurActive.value) onBlurPointerDown(e)
     else if (markActive.value) onMarkPointerDown(e)
@@ -1003,8 +1002,17 @@
 
   function clear() {
     clearAllPreviews()
+    clearHistory()
+    clearBackgroundState()
+
     preview.value = null
     isPdf.value = false
+    originalPdf.value = null
+    originalFileName.value = ''
+    originalFileType.value = ''
+    originalFileSize.value = 0
+    originalLastModified.value = 0
+
     overlayX.value = 0
     overlayY.value = 0
     overlayW.value = 0
@@ -1013,15 +1021,23 @@
     totalPages.value = 1
     suppressGalleryOnce.value = false
 
+    madeTransparentImg.value = false
+    madeTransparentPdf.value = false
+    hasAlpha.value = false
+    checkerOn.value = false
+    origBg.value = { r: 255, g: 255, b: 255 }
+
     disposePanzoom()
 
-    panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'' })
+    panCont.value && Object.assign(panCont.value.style, { width:'', height:'', transform:'', backgroundColor:'' })
     initialScale.value = 1
     fileInput.value && (fileInput.value.value = '')
 
     emit('update:preview', null)
     emit('update:meta', null)
     emit('update:overlay', { width:0, height:0, x:0, y:0 })
+    emit('update:bgcolor', null)
+    emit('update:has-alpha', false)
   }
 
   function setHasAlpha(val) {
