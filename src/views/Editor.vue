@@ -11,6 +11,7 @@
             @update:reference-width="onReferenceWidthUpdate"
             @visible="onToggleCropVisible"
             @undo="onUndo"
+            @redo="onRedo"
             @reset="onReset"
             @clear="onClear"
             @calibrate="onOpenCalibration"
@@ -21,6 +22,12 @@
         <ImageDrop
             :right-gap="rightGap"
             :top-gap="topGap"
+            :active-tool="activeTool"
+            :blur-radius="blurRadius"
+            :blur-intensity="blurIntensity"
+            :mark-thickness="markThickness"
+            :mark-color="markColor"
+            :mark-shape="markShape"
             ref="dropRef"
             @update:preview="imagePreview = $event"
             @update:meta="onMetaUpdate"
@@ -28,6 +35,9 @@
             @update:bgcolor="onBgColorUpdate"
             @update:scale="onScaleUpdateFromDrop"
             @update:has-alpha="isTransparent = $event"
+            @editing="editingNow = true"
+            @blur-stroke="onBlurStroke"
+            @mark-shape="onMarkShape"
         />
 
         <Sidebar
@@ -35,6 +45,12 @@
             :meta="imageMeta"
             :initial-size="{ width: cropWidth, height: cropHeight }"
             :initialColor="bgColor"
+            :active-tool="activeTool"
+            :blur-radius="blurRadius"
+            :blur-intensity="blurIntensity"
+            :mark-thickness="markThickness"
+            :mark-color="markColor"
+            :mark-shape="markShape"
             :export-bytes="exportPreviewBytes"
             :export-loading="exportLoading"
             :bg-transparent="isTransparent" 
@@ -43,6 +59,12 @@
             :top-gap="topGap"
             :applied-grayscale-strength="lastGrayscaleStrength"
             :applied-bg-color="lastBgColor"
+            @set-active-tool="onSetActiveTool"
+            @update-blur-radius="blurRadius = $event"
+            @update-blur-intensity="blurIntensity = $event"
+            @update-mark-thickness="markThickness = $event"
+            @update-mark-color="markColor = $event"
+            @update-mark-shape="markShape = $event"
             @download="onDownload"
             @clear="onClear"
             @crop="onCropToContent"
@@ -108,6 +130,13 @@
     const lastGrayscaleStrength = ref(null)
     const lastBgColor = ref(null)
 
+    const activeTool = ref(null)
+    const blurRadius = ref(28)
+    const blurIntensity = ref(10)
+    const markThickness = ref(4)
+    const markColor = ref('#ff0000')
+    const markShape = ref('rect')
+
     function inferFormat(meta) {
         const name = (meta?.name || '').toLowerCase()
         const type = (meta?.type || '').toLowerCase()
@@ -144,14 +173,18 @@
         dropRef.value?.undo?.()
         lastGrayscaleStrength.value = null
         lastBgColor.value = null
-        recordAction('undo')
+        activeTool.value = null
+    }
+
+    function onRedo() {
+        dropRef.value?.redo?.()
     }
 
     function onReset() {
         dropRef.value?.resetToOriginal?.()
         lastGrayscaleStrength.value = null
         lastBgColor.value = null
-        recordAction('reset')
+        activeTool.value = null
     }
 
     function onToggleCropVisible(visible) {
@@ -338,6 +371,7 @@
 
             lastGrayscaleStrength.value = null
             lastBgColor.value = null
+            activeTool.value = null
         }
 
         if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastDocSig.value && !meta.noGallery) {
@@ -396,6 +430,34 @@
         showScale.value = false
         lastGrayscaleStrength.value = null
         lastBgColor.value = null
+        activeTool.value = null
+    }
+
+    function onSetActiveTool(toolName) {
+        const isPdf = imageMeta.value?.type === 'application/pdf'
+        if (isPdf && (toolName === 'blur' || toolName === 'mark')) {
+            activeTool.value = null
+            window.alert('This tool currently works only for images (not PDFs).')
+            return
+        }
+        activeTool.value = toolName
+    }
+
+    function onBlurStroke(data) {
+        recordAction('blur_stroke', {
+            radius: data.radius,
+            intensity: data.intensity
+        })
+    }
+
+    function onMarkShape(data) {
+        recordAction('mark_shape', {
+            thickness: data.thickness,
+            color: data.color,
+            shape: data.shape,
+            width: data.width,
+            height: data.height
+        })
     }
 
     function onFixArtifacts() {

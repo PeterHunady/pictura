@@ -1,10 +1,11 @@
 <template>
-  <div :class="['sidebar bg-neutral100', { collapsed }]" :style="{ top: props.topGap }">
+  <div :class="['sidebar-wrapper bg-neutral100', { collapsed }]" :style="sidebarStyle">
     <button class="toggle-btn bg-neutral100" @click="collapsed = !collapsed">
       <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
     </button>
 
-    <div class="content bg-neutral100" ref="contentRef" v-show="!collapsed">
+    <div class="sidebar-inner bg-neutral100" v-show="!collapsed">
+      <div class="content bg-neutral100" ref="contentRef">
       <Metadata
         :meta="meta"
         :isOpen="openTool === 'metadata'"
@@ -44,6 +45,28 @@
         @toggle="toggleTool('grayscale')"
       />
 
+      <MarkControls
+        :meta="meta"
+        :isOpen="openTool === 'mark'"
+        :thickness="markThickness"
+        :color="markColor"
+        :shape="markShape"
+        @update:thickness="emit('update-mark-thickness', $event)"
+        @update:color="emit('update-mark-color', $event)"
+        @update:shape="emit('update-mark-shape', $event)"
+        @toggle="toggleTool('mark')"
+      />
+
+      <BlurControls
+        :meta="meta"
+        :isOpen="openTool === 'blur'"
+        :radius="blurRadius"
+        :intensity="blurIntensity"
+        @update:radius="emit('update-blur-radius', $event)"
+        @update:intensity="emit('update-blur-intensity', $event)"
+        @toggle="toggleTool('blur')"
+      />
+
       <FixArtifactsBtn
         :meta="meta"
         :isOpen="openTool === 'artifacts'"
@@ -74,14 +97,17 @@
           :alt="isAtBottom ? 'Up' : 'Down'"
         />
       </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-  import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+  import { ref, watch, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
   import Metadata from './Metadata.vue'
   import CropControls from './CropControls.vue'
+  import MarkControls from './MarkControls.vue'
+  import BlurControls from './BlurControls.vue'
   import FixArtifactsBtn from './FixArtifactsButton.vue'
   import BackgroundColorControl from './BackgroundColorControl.vue'
   import GrayscaleControl from './GrayscaleControl.vue'
@@ -94,6 +120,12 @@
     meta: Object,
     initialSize: Object,
     initialColor: { type: String, default: '#ffffff' },
+    activeTool: { type: String, default: null },
+    blurRadius: { type: Number, default: 28 },
+    blurIntensity: { type: Number, default: 10 },
+    markThickness: { type: Number, default: 4 },
+    markColor: { type: String, default: '#ff0000' },
+    markShape: { type: String, default: 'rect' },
     exportBytes: { type: Number, default: null },
     exportLoading: { type: Boolean, default: false },
     exportSuggestedName: { type: String, default: null },
@@ -111,14 +143,36 @@
     'fix-artifacts','apply-color','highlight-artifacts','apply-grayscale',
     'preview-grayscale','end-preview-grayscale',
     'preview-color','end-preview-color', 'export', 'request-export-preview', 'remove-background'
+    ,'set-active-tool','update-blur-radius','update-blur-intensity'
+    ,'update-mark-thickness','update-mark-color','update-mark-shape'
   ])
+
+  const sidebarStyle = computed(() => {
+    const top = (props.topGap && String(props.topGap).trim()) ? props.topGap : '0px'
+    return {
+      top,
+      height: `calc(100vh - ${top})`
+    }
+  })
 
   const collapsed = ref(props.modelValue)
   watch(() => props.modelValue, v => (collapsed.value = v))
-  watch(collapsed, v => emit('update:modelValue', v))
+  watch(collapsed, v => {
+    emit('update:modelValue', v)
+
+    if (v) {
+      openTool.value = null
+      emit('set-active-tool', null)
+    }
+  })
   watch(() => props.meta, m => { if (!m && window.innerWidth < 768) collapsed.value = true })
 
   const openTool = ref(null)
+
+  watch(() => props.activeTool, (t) => {
+    if (openTool.value === 'blur' && t !== 'blur') openTool.value = null
+    if (openTool.value === 'mark' && t !== 'mark') openTool.value = null
+  })
 
   const toggleTool = (toolName) => {
     if (openTool.value === toolName) {
@@ -126,6 +180,9 @@
     } else {
       openTool.value = toolName
     }
+
+    const isLiveTool = openTool.value === 'blur' || openTool.value === 'mark'
+    emit('set-active-tool', isLiveTool ? openTool.value : null)
   }
 
   const contentRef = ref(null)
@@ -188,22 +245,29 @@
 </script>
 
 <style scoped>
-  .sidebar {
+  .sidebar-wrapper {
     position: fixed;
     width: 30vw; max-width: 300px;
-    border-left: 1px solid #ddd;
-    box-shadow: -2px 0 4px rgba(0,0,0,.1);
     transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
     z-index: 100;
     box-sizing: border-box;
-    right: 0; bottom: 0;
+    right: 0;
     display: flex;
     flex-direction: column;
     overflow: visible;
   }
 
-  .sidebar.collapsed {
+  .sidebar-wrapper.collapsed {
     transform: translateX(calc(100% - 30px));
+  }
+
+  .sidebar-inner {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid #ddd;
+    box-shadow: -2px 0 4px rgba(0,0,0,.1);
   }
 
   .toggle-btn {
@@ -239,17 +303,13 @@
   }
 
   .content {
-    flex: 1 1 auto;
+    flex: 1;
     min-height: 0;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: .75rem;
     padding: 1rem 1.25rem 1rem 1rem;
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
-    scrollbar-gutter: stable both-edges;
   }
 
   .icon-btn {
@@ -273,6 +333,8 @@
   :deep(.resize),
   :deep(.enhance),
   :deep(.grayscale),
+  :deep(.blur-controls),
+  :deep(.mark-controls),
   :deep(.background-color-control),
   :deep(.export),
   :deep(.export-control) {
@@ -283,12 +345,27 @@
     background-clip: padding-box;
     overflow: hidden;
     box-sizing: border-box;
+    margin-bottom: 1.75rem;
+  }
+
+  :deep(.metadata:last-child),
+  :deep(.resize:last-child),
+  :deep(.enhance:last-child),
+  :deep(.grayscale:last-child),
+  :deep(.blur-controls:last-child),
+  :deep(.mark-controls:last-child),
+  :deep(.background-color-control:last-child),
+  :deep(.export:last-child),
+  :deep(.export-control:last-child) {
+    margin-bottom: 0;
   }
 
   :deep(.metadata > .metadata-toggle),
   :deep(.resize > .resize-toggle),
   :deep(.enhance > .enhance-toggle),
   :deep(.grayscale > .toggle),
+  :deep(.blur-controls > .control-toggle),
+  :deep(.mark-controls > .control-toggle),
   :deep(.background-color-control > .control-toggle),
   :deep(.export > .export-toggle),
   :deep(.export-control > .export-toggle) {
@@ -304,6 +381,8 @@
   :deep(.resize > .resize-list),
   :deep(.enhance > .enhance-list),
   :deep(.grayscale > .panel),
+  :deep(.blur-controls > .control-panel),
+  :deep(.mark-controls > .control-panel),
   :deep(.background-color-control > .control-panel),
   :deep(.export > .export-panel),
   :deep(.export-control > .export-panel) {
@@ -314,9 +393,13 @@
   :deep(.background-color-control .field input[type="text"]),
   :deep(.resize .input-row .input-group),
   :deep(.grayscale .row input[type="range"]),
+  :deep(.blur-controls .row input[type="range"]),
+  :deep(.mark-controls .row input[type="range"]),
   :deep(.enhance .enhance-list),
   :deep(.resize .resize-list),
   :deep(.grayscale .panel),
+  :deep(.blur-controls .control-panel),
+  :deep(.mark-controls .control-panel),
   :deep(.metadata .metadata-list),
   :deep(.export .export-row),
   :deep(.export-control .export-row) {

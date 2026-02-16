@@ -21,6 +21,7 @@ export function useHistory({
   madeTransparentImg
 }) {
   const history = []
+  const future = []
   const origSnapshot = ref(null)
 
   function pdfBytes() {
@@ -110,6 +111,7 @@ export function useHistory({
 
     const snap = makeSnapshot()
     history.push(snap)
+    future.length = 0
 
     if (history.length > MAX_HISTORY) {
       history.shift()
@@ -122,6 +124,20 @@ export function useHistory({
       return
     }
 
+    const currentSnap = makeSnapshot()
+    future.push(currentSnap)
+
+    restoreSnapshot(snap)
+  }
+
+  function redo() {
+    const snap = future.pop()
+    if (!snap) {
+      return
+    }
+
+    const currentSnap = makeSnapshot()
+    history.push(currentSnap)
     restoreSnapshot(snap)
   }
 
@@ -131,6 +147,7 @@ export function useHistory({
     }
 
     history.length = 0
+    future.length = 0
     restoreSnapshot(origSnapshot.value)
   }
 
@@ -141,9 +158,11 @@ export function useHistory({
 
   return {
     history,
+    future,
     origSnapshot,
     pushHistory,
     undo,
+    redo,
     resetToOriginal,
     saveOriginalSnapshot,
     makeSnapshot,

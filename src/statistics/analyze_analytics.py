@@ -103,16 +103,27 @@ def make_plots(df: pd.DataFrame, outdir: Path):
         df_with_ts["action_count"] = df_with_ts["actions"].map(lambda a: len(a) if isinstance(a, list) else 0)
 
         monthly_actions = df_with_ts.groupby("month")["action_count"].sum().sort_index()
+        monthly_users = df_with_ts.groupby("month")["session_id"].nunique().sort_index()
 
         if len(monthly_actions) > 0:
             plt.figure(figsize=(10, 6))
             monthly_actions.plot(kind="bar")
-            plt.title("Actions per Month")
+            plt.title("Actions per month")
             plt.xlabel("Month")
             plt.ylabel("Total Actions")
             plt.xticks(rotation=45)
             plt.tight_layout()
             plt.savefig(outdir / "actions_per_month.png", dpi=150)
+            plt.close()
+
+            plt.figure(figsize=(10, 6))
+            monthly_users.plot(kind="bar")
+            plt.title("Users per Month")
+            plt.xlabel("Month")
+            plt.ylabel("Users")
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            plt.savefig(outdir / "users_per_month.png", dpi=150)
             plt.close()
 
 
@@ -129,7 +140,6 @@ def main():
 
     df = load_ndjson(path)
 
-    # Statistics
     total_sessions = len(df)
     unique_users = df["session_id"].nunique() if "session_id" in df.columns else 0
 
@@ -153,18 +163,23 @@ def main():
         df_with_ts["action_count"] = df_with_ts["actions"].map(lambda a: len(a) if isinstance(a, list) else 0)
 
         monthly_actions = df_with_ts.groupby("month")["action_count"].sum().sort_index()
+        monthly_users = df_with_ts.groupby("month")["session_id"].nunique().sort_index()
 
         if len(monthly_actions) > 0:
             print(f"\n=== Monthly Activity ===")
-            for month, count in monthly_actions.items():
-                print(f"{month}: {int(count)} actions")
+            for month in monthly_actions.index:
+                actions = int(monthly_actions[month])
+                users = int(monthly_users[month])
+                print(f"{month}: {actions} actions, {users} unique users")
 
             most_active = monthly_actions.idxmax()
-            print(f"\nMost active month: {most_active} ({int(monthly_actions[most_active])} actions)")
+            most_users = monthly_users.idxmax()
+            print(f"\nMost active month (actions): {most_active} ({int(monthly_actions[most_active])} actions)")
+            print(f"Most active month (users): {most_users} ({int(monthly_users[most_users])} unique users)")
 
     print(f"\nGenerating charts...")
     make_plots(df, Path(args.out))
-    print(f"Charts written to {args.out}/\n - actions_types.png\n - actions_per_session.png\n - actions_per_month.png")
+    print(f"Charts written to {args.out}/\n - actions_types.png\n - actions_per_session.png\n - actions_per_month.png\n - users_per_month.png")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,28 @@
           alt="Preview"
           draggable="false"
           @load="handleImageLoaded"
+          v-show="!liveToolActive"
         />
+
+        <canvas
+          v-if="!isPdf"
+          ref="editCanvas"
+          class="preview-canvas preview-edit-canvas"
+          v-show="liveToolActive"
+        ></canvas>
+
+        <canvas
+          v-if="!isPdf"
+          ref="toolCanvas"
+          class="tool-canvas"
+          :class="{ active: liveToolActive, 'cursor-crosshair': markActive && !markCursor, 'cursor-none': blurActive, [markCursor]: markCursor }"
+          v-show="liveToolActive"
+          @pointerdown.stop.prevent="onLiveToolPointerDown"
+          @pointermove.stop.prevent="onLiveToolPointerMove"
+          @pointerup.stop.prevent="onLiveToolPointerUp"
+          @pointercancel.stop.prevent="onLiveToolPointerUp"
+          @pointerleave.stop.prevent="onLiveToolPointerLeave"
+        ></canvas>
 
         <img
           ref="previewImg"
@@ -46,7 +67,7 @@
         <canvas ref="markCanvas" class="mark-canvas"></canvas>
 
         <div
-          v-if="overlayW && overlayH && overlayVisible"
+          v-if="overlayW && overlayH && overlayVisible && !liveToolActive"
           class="crop-overlay"
           :style="overlayStyle"
         >
@@ -164,11 +185,24 @@
   import { useHistory } from '../composables/useHistory'
   import { usePanzoom } from '../composables/usePanzoom'
   import { useExport } from '../composables/useExport'
+  import { useBlur } from '../composables/useBlur'
+  import { useMark } from '../composables/useMark'
 
   import {
     canvasHasAlpha,
     hasAlphaImage
   } from '../utils/imageProcessing'
+
+  const props = defineProps({
+    rightGap: { type: String, default: 'min(30vw, 300px)' },
+    topGap: { type: String, default: '0px' },
+    activeTool: { type: String, default: null },
+    blurRadius: { type: Number, default: 28 },
+    blurIntensity: { type: Number, default: 10 },
+    markThickness: { type: Number, default: 4 },
+    markColor: { type: String, default: '#ff0000' },
+    markShape: { type: String, default: 'rect' },
+  })
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
   const { getDocument } = pdfjsLib
@@ -183,6 +217,18 @@
   const panCont = ref(null)
   const fileInput = ref(null)
   const markCanvas = ref(null)
+  const editCanvas = ref(null)
+  const toolCanvas = ref(null)
+
+  const blurActive = computed(() => props.activeTool === 'blur')
+  const markActive = computed(() => props.activeTool === 'mark')
+  const liveToolActive = computed(() => blurActive.value || markActive.value)
+
+  const blurRadius = computed(() => props.blurRadius)
+  const blurIntensity = computed(() => props.blurIntensity)
+  const markThickness = computed(() => props.markThickness)
+  const markColor = computed(() => props.markColor)
+  const markShape = computed(() => props.markShape)
 
   const currentPage = ref(1)
   const totalPages = ref(1)
@@ -196,7 +242,7 @@
   const maxW = computed(() => isPdf.value ? (pdfCanvas.value?.width  || 1) : (imgEl.value?.naturalWidth  || 1))
   const maxH = computed(() => isPdf.value ? (pdfCanvas.value?.height || 1) : (imgEl.value?.naturalHeight || 1))
   const origBg = ref({ r: 255, g: 255, b: 255 })
-  const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor', 'update:scale', 'update:has-alpha'])
+  const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor', 'update:scale', 'update:has-alpha', 'editing', 'blur-stroke', 'mark-shape'])
 
   const PDF_PREVIEW_DPI = 600;
   const MAX_CANVAS_PIXELS = 25e6;
@@ -344,6 +390,7 @@
   const {
     pushHistory,
     undo,
+    redo,
     resetToOriginal,
     saveOriginalSnapshot,
     makeSnapshot,
@@ -369,6 +416,15 @@
       }
     } else {
       await resetZoomTo100()
+    }
+
+    if (blurActive.value) {
+      await nextTick()
+      handleImageLoadedBlur()
+    }
+    if (markActive.value) {
+      await nextTick()
+      handleImageLoadedMark()
     }
   }
 
@@ -525,6 +581,89 @@
     cropToOverlay
   } = cropComposable
 
+  // Blur tool composable
+  const blurComposable = useBlur({
+    isPdf,
+    imgEl,
+    editCanvas,
+    toolCanvas,
+    preview,
+    originalFileName,
+    blurActive,
+    blurRadius,
+    blurIntensity,
+    emit,
+    setHasAlpha,
+    canvasHasAlpha,
+    pushHistory
+  })
+
+  const {
+    blurSuppressNextImgLoadResync,
+    prepareBlurCanvases,
+    onBlurPointerDown,
+    onBlurPointerMove,
+    onBlurPointerUp,
+    onBlurPointerLeave,
+    setupBlurWatchers,
+    handleImageLoadedBlur
+  } = blurComposable
+
+  setupBlurWatchers()
+
+  // Mark tool composable
+  const markComposable = useMark({
+    isPdf,
+    imgEl,
+    editCanvas,
+    toolCanvas,
+    preview,
+    originalFileName,
+    markActive,
+    markThickness,
+    markColor,
+    markShape,
+    emit,
+    setHasAlpha,
+    canvasHasAlpha,
+    pushHistory
+  })
+
+  const {
+    markSuppressNextImgLoadResync,
+    markCursor,
+    prepareMarkCanvases,
+    onMarkPointerDown,
+    onMarkPointerMove,
+    onMarkPointerUp,
+    onMarkPointerLeave,
+    setupMarkWatchers,
+    handleImageLoadedMark
+  } = markComposable
+
+  setupMarkWatchers()
+
+  // Unified live tool handlers
+  function onLiveToolPointerDown(e) {
+    if (blurActive.value) onBlurPointerDown(e)
+    else if (markActive.value) onMarkPointerDown(e)
+  }
+
+  function onLiveToolPointerMove(e) {
+    if (blurActive.value) onBlurPointerMove(e)
+    else if (markActive.value) onMarkPointerMove(e)
+  }
+
+  function onLiveToolPointerUp(e) {
+    if (blurActive.value) onBlurPointerUp(e)
+    else if (markActive.value) onMarkPointerUp(e)
+  }
+
+  function onLiveToolPointerLeave() {
+    if (blurActive.value) onBlurPointerLeave()
+    else if (markActive.value) onMarkPointerLeave()
+  }
+
   function getSourceCanvas() {
     if (isPdf.value && pdfCanvas.value?.width) return pdfCanvas.value
     const img = imgEl.value
@@ -598,11 +737,6 @@
     exportFile,
     download
   } = exportComposable
-
-  const props = defineProps({
-    rightGap: { type: String, default: 'min(30vw, 300px)' },
-    topGap: { type: String, default: '0px' }
-  })
 
   let ro = null
 
@@ -941,6 +1075,7 @@
 
     // History
     undo,
+    redo,
     resetToOriginal,
 
     // Overlay
@@ -1035,6 +1170,36 @@
     pointer-events: none; 
     z-index: 4;
   }
+
+  .tool-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 6;
+    pointer-events: none;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .tool-canvas.cursor-none {
+    cursor: none;
+  }
+
+  .tool-canvas.cursor-crosshair {
+    cursor: crosshair;
+  }
+
+  .tool-canvas.active {
+    pointer-events: all;
+  }
+
+  .tool-canvas.cursor-nw-resize { cursor: nw-resize; }
+  .tool-canvas.cursor-ne-resize { cursor: ne-resize; }
+  .tool-canvas.cursor-sw-resize { cursor: sw-resize; }
+  .tool-canvas.cursor-se-resize { cursor: se-resize; }
+  .tool-canvas.cursor-move { cursor: move; }
 
   .crop-overlay {
     position: absolute;

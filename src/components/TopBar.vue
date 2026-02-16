@@ -11,6 +11,10 @@
             <img class="icon" :src="undoIcon" alt="Undo" />
           </button>
 
+          <button class="icon-btn" title="Redo (Ctrl+Y)" @click="$emit('redo')">
+            <img class="icon" :src="redoIcon" alt="Redo" />
+          </button>
+
           <button class="icon-btn" title="Reset" @click="$emit('reset')">
             <img class="icon" :src="resetIcon" alt="Reset" />
           </button>
@@ -128,6 +132,7 @@
   import { ref, watch, onMounted, onUnmounted } from 'vue'
   import defaultLogo from '@/assets/logo.png'
   import undoIcon from '@/assets/undo.svg'
+  import redoIcon from '@/assets/redo.svg'
   import resetIcon from '@/assets/reset.svg'
   import binIcon from '@/assets/bin.svg'
   import visibleIcon from '@/assets/visible.svg'
@@ -151,7 +156,7 @@
   const showCalibTooltip = ref(false)
 
   const emit = defineEmits([
-    'undo','reset','clear','visible',
+    'undo','redo','reset','clear','visible',
     'update:scale','update:reference-width',
     'calibrate','clear-calibration','reset-to-100',
   ])
@@ -228,6 +233,10 @@
     if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
       event.preventDefault()
       emit('undo')
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'y') {
+      event.preventDefault()
+      emit('redo')
     }
   }
 
