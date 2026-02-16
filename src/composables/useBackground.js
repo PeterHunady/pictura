@@ -155,45 +155,95 @@ export function useBackground({
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    const srgbToLinear = (v) => {
-      v /= 255
-      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    // Use flood-fill to find background pixels connected to edges
+    const bgMask = new Uint8Array(width * height)
+    const TOLERANCE_SQ = 2500 // Color distance threshold squared (about 50 per channel)
+
+    const distSqToBg = (r, g, b) => {
+      const dr = r - bgRGB.r
+      const dg = g - bgRGB.g
+      const db = b - bgRGB.b
+      return dr * dr + dg * dg + db * db
     }
-    const linearToSrgb = (v) => {
-      v = v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1 / 2.4) - 0.055
-      return Math.max(0, Math.min(255, Math.round(v * 255)))
+
+    const isBgColor = (idx) => {
+      const r = data[idx]
+      const g = data[idx + 1]
+      const b = data[idx + 2]
+      const a = data[idx + 3]
+      if (a < 10) return true // Already transparent
+      return distSqToBg(r, g, b) <= TOLERANCE_SQ
     }
 
-    const br = srgbToLinear(bgRGB.r)
-    const bg = srgbToLinear(bgRGB.g)
-    const bb = srgbToLinear(bgRGB.b)
-    const tol = 0.08
+    // Flood fill from edges
+    const queue = []
 
-    for (let i = 0; i < data.length; i += 4) {
-      const rL = srgbToLinear(data[i])
-      const gL = srgbToLinear(data[i + 1])
-      const bL = srgbToLinear(data[i + 2])
-
-      const aR = br < 1e-6 ? (rL > br ? 1 : 0) : rL >= br ? (rL - br) / (1 - br) : (br - rL) / br
-      const aG = bg < 1e-6 ? (gL > bg ? 1 : 0) : gL >= bg ? (gL - bg) / (1 - bg) : (bg - gL) / bg
-      const aB = bb < 1e-6 ? (bL > bb ? 1 : 0) : bL >= bb ? (bL - bb) / (1 - bb) : (bb - bL) / bb
-
-      let a = Math.max(aR, aG, aB)
-      if (tol > 0) a = Math.max(0, Math.min(1, (a - tol) / (1 - tol)))
-
-      let fr = 0
-      let fg = 0
-      let fb = 0
-      if (a > 1e-5) {
-        fr = (rL - (1 - a) * br) / a
-        fg = (gL - (1 - a) * bg) / a
-        fb = (bL - (1 - a) * bb) / a
+    // Add edge pixels to queue
+    for (let x = 0; x < width; x++) {
+      const topIdx = x * 4
+      const bottomIdx = ((height - 1) * width + x) * 4
+      if (isBgColor(topIdx) && !bgMask[x]) {
+        bgMask[x] = 1
+        queue.push(x)
       }
+      const bottomPix = (height - 1) * width + x
+      if (isBgColor(bottomIdx) && !bgMask[bottomPix]) {
+        bgMask[bottomPix] = 1
+        queue.push(bottomPix)
+      }
+    }
+    for (let y = 0; y < height; y++) {
+      const leftIdx = (y * width) * 4
+      const rightIdx = (y * width + width - 1) * 4
+      const leftPix = y * width
+      const rightPix = y * width + width - 1
+      if (isBgColor(leftIdx) && !bgMask[leftPix]) {
+        bgMask[leftPix] = 1
+        queue.push(leftPix)
+      }
+      if (isBgColor(rightIdx) && !bgMask[rightPix]) {
+        bgMask[rightPix] = 1
+        queue.push(rightPix)
+      }
+    }
 
-      data[i] = linearToSrgb(fr)
-      data[i + 1] = linearToSrgb(fg)
-      data[i + 2] = linearToSrgb(fb)
-      data[i + 3] = Math.round(a * 255)
+    // BFS flood fill
+    while (queue.length > 0) {
+      const pix = queue.shift()
+      const x = pix % width
+      const y = Math.floor(pix / width)
+
+      const neighbors = [
+        { nx: x - 1, ny: y },
+        { nx: x + 1, ny: y },
+        { nx: x, ny: y - 1 },
+        { nx: x, ny: y + 1 }
+      ]
+
+      for (const { nx, ny } of neighbors) {
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+        const nPix = ny * width + nx
+        if (bgMask[nPix]) continue
+        const nIdx = nPix * 4
+        if (isBgColor(nIdx)) {
+          bgMask[nPix] = 1
+          queue.push(nPix)
+        }
+      }
+    }
+
+    // Apply transparency only to background pixels (connected to edges)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const pix = y * width + x
+        const idx = pix * 4
+
+        if (bgMask[pix]) {
+          // This pixel is part of connected background - make transparent
+          data[idx + 3] = 0
+        }
+        // Non-background pixels keep their original color and alpha
+      }
     }
 
     context.putImageData(imageData, 0, 0)
