@@ -4,7 +4,6 @@ import { PDFDocument } from 'pdf-lib'
 import { hexToRgb, rgbToHex, dataURLtoU8, canvasHasAlpha } from './imageProcessing'
 
 const { getDocument } = pdfjsLib
-
 const PDF_EXPORT_DPI = 600
 const MAX_CANVAS_PIXELS = 25e6
 
