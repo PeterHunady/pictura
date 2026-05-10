@@ -30,53 +30,52 @@
 </template>
 
 <script setup>
-    import propertiesIcon from '@/assets/properties.svg'
+  import propertiesIcon from '@/assets/properties.svg'
 
-    const props = defineProps({
-        meta: Object,
-        isOpen: { type: Boolean, default: false }
+  const props = defineProps({
+    meta: Object,
+    isOpen: { type: Boolean, default: false }
+  })
+
+  const emit = defineEmits(['toggle'])
+  const formatDate = ts => ts ? new Date(ts).toLocaleString() : '—'
+
+  function formatSize(bytes) {
+    if (!bytes) {
+        return '—'
+    }
+
+    const kb = bytes / 1024
+    return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`
+  }
+
+  const onEnter = (el) => {
+    el.style.height = '0px'
+    el.style.opacity = '0'
+
+    const target = el.scrollHeight
+
+    requestAnimationFrame(() => {
+    el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
+    el.style.height = target + 'px'
+    el.style.opacity = '1'
     })
+  }
 
-    const emit = defineEmits(['toggle'])
+  const onAfterEnter = (el) => {
+    el.style.height = 'auto'
+    el.style.transition = ''
+  }
 
-    function formatSize(b) {
-        if (!b) {
-            return '—'
-        }
-        
-        const kb = b / 1024
-        return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`
-    }
+  const onLeave = (el) => {
+    el.style.height = el.scrollHeight + 'px'
+    el.style.opacity = '1'
+    void el.offsetHeight
 
-    const formatDate = ts => ts ? new Date(ts).toLocaleString() : '—'
-
-    const onEnter = (el) => {
-        el.style.height = '0px'
-        el.style.opacity = '0'
-
-        const target = el.scrollHeight
-
-        requestAnimationFrame(() => {
-        el.style.transition = 'height 0.3s ease, opacity 0.3s ease'
-        el.style.height = target + 'px'
-        el.style.opacity = '1'
-        })
-    }
-
-    const onAfterEnter = (el) => {
-        el.style.height = 'auto'
-        el.style.transition = ''
-    }
-
-    const onLeave = (el) => {
-        el.style.height = el.scrollHeight + 'px'
-        el.style.opacity = '1'
-        void el.offsetHeight
-
-        el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
-        el.style.height = '0px'
-        el.style.opacity = '0'
-    }
+    el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
+    el.style.height = '0px'
+    el.style.opacity = '0'
+  }
 </script>
 
 <style scoped>

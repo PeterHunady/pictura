@@ -1,11 +1,11 @@
 import { ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument } from 'pdf-lib'
-import { dataURLtoU8 } from '../utils/imageProcessing'
+import { dataURLtoU8 } from './imageProcessing'
 
 const { getDocument } = pdfjsLib
 
-const PDF_RASTER_OPS_DPI = 600
+const PDF_EXPORT_DPI = 600
 const MAX_CANVAS_PIXELS = 25e6
 
 export function useGrayscale({
@@ -27,21 +27,21 @@ export function useGrayscale({
   const previewType = ref(null)
 
   function previewGrayscale({ strength = 1 } = {}) {
-    const node = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (!node) {
+    const previewElement = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (!previewElement) {
       return
     }
 
-    const s = Math.max(0, Math.min(1, strength))
-    node.style.filter = `grayscale(${s})`
+    const strengthValue = Math.max(0, Math.min(1, strength))
+    previewElement.style.filter = `grayscale(${strengthValue})`
     previewType.value = 'grayscale'
     previewOn.value = true
   }
 
   function endPreviewGrayscale() {
-    const node = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (node) {
-      node.style.filter = ''
+    const previewElement = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (previewElement) {
+      previewElement.style.filter = ''
     }
 
     if (previewType.value === 'grayscale') {
@@ -50,91 +50,75 @@ export function useGrayscale({
     }
   }
 
-  function grayscaleCanvas(canvas, strength = 1, mode = 'bt601') {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    const w = canvas.width, h = canvas.height
-    const im = ctx.getImageData(0, 0, w, h)
-    const d = im.data
+  function grayscaleCanvas(canvas, strength = 1) {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    const width = canvas.width, height = canvas.height
+    const imageData = context.getImageData(0, 0, width, height)
+    const data = imageData.data
 
-    let wr = 0.299, wg = 0.587, wb = 0.114
-    if (mode === 'bt709') {
-      wr = 0.2126; wg = 0.7152; wb = 0.0722
-    }
+    const redWeight = 0.299, greenWeight = 0.587, blueWeight = 0.114
+    const strengthValue = Math.max(0, Math.min(1, strength))
 
-    const s = Math.max(0, Math.min(1, strength))
-    for (let i = 0; i < d.length; i += 4) {
-      const Y = d[i] * wr + d[i + 1] * wg + d[i + 2] * wb
-      d[i] = Math.round(d[i] + (Y - d[i]) * s)
-      d[i + 1] = Math.round(d[i + 1] + (Y - d[i + 1]) * s)
-      d[i + 2] = Math.round(d[i + 2] + (Y - d[i + 2]) * s)
+    for (let i = 0; i < data.length; i += 4) {
+      const luminance = data[i] * redWeight + data[i + 1] * greenWeight + data[i + 2] * blueWeight
+      data[i] = Math.round(data[i] + (luminance - data[i]) * strengthValue)
+      data[i + 1] = Math.round(data[i + 1] + (luminance - data[i + 1]) * strengthValue)
+      data[i + 2] = Math.round(data[i + 2] + (luminance - data[i + 2]) * strengthValue)
     }
-    ctx.putImageData(im, 0, 0)
+    context.putImageData(imageData, 0, 0)
   }
 
-  async function applyGrayscale({ mode = 'bt601', strength = 1 } = {}) {
+  async function applyGrayscale({ strength = 1 } = {}) {
     pushHistory()
     endPreviewGrayscale()
 
     if (isPdf.value) {
       suppressGalleryOnce.value = true
 
-      const srcDoc = await PDFDocument.load(pdfBytes(), { ignoreEncryption: true })
-      const outDoc = await PDFDocument.create()
-      const pages = srcDoc.getPages()
-
+      const sourcePdf = await PDFDocument.load(pdfBytes(), { ignoreEncryption: true })
+      const croppedPdf = await PDFDocument.create()
+      const pages = sourcePdf.getPages()
       const totalPages = pages.length
-      const activeIndex = Math.max(
-        0,
-        Math.min(totalPages - 1, (currentPage.value || 1) - 1)
-      )
-
+      const activeIndex = Math.max(0, Math.min(totalPages - 1, (currentPage.value || 1) - 1))
       const pdfJs = await getDocument({ data: pdfBytes() }).promise
-      const jsPage = await pdfJs.getPage(activeIndex + 1)
+      const rasterPage = await pdfJs.getPage(activeIndex + 1)
 
-      const vp1 = jsPage.getViewport({ scale: 1 })
-      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-      const maxScaleByPixels =
-        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const defaultViewport = rasterPage.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
+      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
       const scale = Math.min(dpiScale, maxScaleByPixels)
-      const vp = jsPage.getViewport({ scale })
+      const exportViewport = rasterPage.getViewport({ scale })
 
-      const off = document.createElement('canvas')
-      off.width = Math.round(vp.width)
-      off.height = Math.round(vp.height)
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = Math.round(exportViewport.width)
+      tempCanvas.height = Math.round(exportViewport.height)
 
-      await jsPage.render({
-        canvasContext: off.getContext('2d', { willReadFrequently: true }),
-        viewport: vp,
+      await rasterPage.render({
+        canvasContext: tempCanvas.getContext('2d', { willReadFrequently: true }),
+        viewport: exportViewport,
         background: 'rgba(0,0,0,0)'
       }).promise
 
-      grayscaleCanvas(off, strength, mode)
+      grayscaleCanvas(tempCanvas, strength)
 
-      const pngBytes = dataURLtoU8(off.toDataURL('image/png'))
-      const pngImg = await outDoc.embedPng(pngBytes)
+      const pngBytes = dataURLtoU8(tempCanvas.toDataURL('image/png'))
+      const pngImg = await croppedPdf.embedPng(pngBytes)
 
       for (let i = 0; i < totalPages; i++) {
         if (i === activeIndex) {
           const { width: pageW, height: pageH } = pages[i].getSize()
-          const outPage = outDoc.addPage([pageW, pageH])
+          const newPage = croppedPdf.addPage([pageW, pageH])
 
-          outPage.drawImage(pngImg, {
-            x: 0,
-            y: 0,
-            width: pageW,
-            height: pageH
-          })
+          newPage.drawImage(pngImg, { x: 0, y: 0, width: pageW, height: pageH })
         } else {
-          const [copied] = await outDoc.copyPages(srcDoc, [i])
-          outDoc.addPage(copied)
+          const [copied] = await croppedPdf.copyPages(sourcePdf, [i])
+          croppedPdf.addPage(copied)
         }
       }
 
-      const newBytes = await outDoc.save()
+      const newBytes = await croppedPdf.save()
       originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(
-        new Blob([newBytes], { type: 'application/pdf' })
-      )
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
@@ -148,26 +132,25 @@ export function useGrayscale({
       return
     }
 
-    const c = document.createElement('canvas')
-    c.width = img.naturalWidth
-    c.height = img.naturalHeight
-    c.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    canvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
 
-    grayscaleCanvas(c, strength, mode)
+    grayscaleCanvas(canvas, strength)
 
-    const newSrc = c.toDataURL('image/png')
+    const newSrc = canvas.toDataURL('image/png')
     preview.value = newSrc
     emit('update:preview', newSrc)
     emit('update:meta', {
       name: 'grayscale.png',
       type: 'image/png',
       size: atob(newSrc.split(',')[1]).length,
-      width: c.width,
-      height: c.height,
+      width: canvas.width,
+      height: canvas.height,
       lastModified: Date.now()
     })
   }
-
 
   return {
     previewOn,

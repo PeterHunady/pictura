@@ -1,7 +1,6 @@
 <template>
     <div class="page">
         <TopBar
-            :right-gap="rightGap"
             :top-gap="topGap"
             :show-actions="false"
         />
@@ -10,12 +9,11 @@
             <section class="intro">
                 <h1 class="ty-headline-medium">Quick image & PDF tweaks!</h1>
                 <p class="ty-body-medium">
-                    Drop or select a photo, screenshot, or PDF to change the background color, convert to grayscale,
-                    crop or crop-to-content, then export to PNG, JPG, or PDF — right in your browser.
+                    A simple browser tool for preparing images, screenshots, and PDF pages for academic documents.
+                    Crop, clean, highlight, adjust, and export your files in just a few steps.
                 </p>
-                <p>
-                    Live preview, precise on-canvas controls, and private local processing
-                    (your files never leave your device).
+                <p class="ty-body-medium">
+                    Everything runs locally in your browser, so your files stay private and never leave your device.
                 </p>
             </section>
 
@@ -27,8 +25,8 @@
                 @drop.prevent="onDrop"
             >
                 <div class="dz-inner">
-                    <strong>Drop file here</strong>
-                    <span>or click to select (PNG, JPG, PDF)</span>
+                    <strong>Add an image or PDF</strong>
+                    <span>Drop, click, or paste with Ctrl/Cmd + V</span>
                 </div>
 
                 <input
@@ -44,22 +42,20 @@
 </template>
 
 <script setup>
-    import { ref, computed, onMounted, onUnmounted } from 'vue'
+    import { ref, onMounted, onUnmounted } from 'vue'
     import { useRouter } from 'vue-router'
-    import TopBar from '@/components/TopBar.vue'
+    import TopBar from '@/components/Topbar.vue'
     import { setPendingFile } from '@/composables/usePendingFile'
 
     const router = useRouter()
-    const sidebarCollapsed = ref(false)
-    const rightGap = computed(() => (sidebarCollapsed.value ? '30px' : 'min(30vw, 300px)'))
-    const topGap   = computed(() => (sidebarCollapsed.value ? '48px' : '38px'))
+    const topGap = '48px'
     const fileInput = ref(null)
 
     function openPicker(){
         fileInput.value?.click()
     }
 
-    function pickFirstValid(files){
+    function pickFile(files){
         return [...files].find(f => f.type.startsWith('image/') || f.type === 'application/pdf') || null
     }
 
@@ -73,12 +69,12 @@
     }
 
     function onPick(e){
-        handleFile(pickFirstValid(e.target.files || []))
+        handleFile(pickFile(e.target.files || []))
         e.target.value = ''
     }
 
     function onDrop(e){
-        handleFile(pickFirstValid(e.dataTransfer?.files || []))
+        handleFile(pickFile(e.dataTransfer?.files || []))
     }
 
     function onPaste(e){

@@ -1,5 +1,5 @@
 import { ref, nextTick } from 'vue'
-import panzoom from 'panzoom'
+import createPanzoom from 'panzoom'
 
 const PZ_MIN_ZOOM = 0.2
 const PZ_MAX_ZOOM = 20
@@ -9,184 +9,171 @@ export function usePanzoom({
   pdfCanvas,
   imgEl,
   previewWrap,
-  panCont,
+  canvasWrapper,
   markCanvas,
   emit,
   displayScale,
   referenceWidthMm,
   screenDPI,
   basePixelWidth,
-  minScalePct,
-  maxScalePct,
+  minScalePercent,
+  maxScalePercent,
   highlightOn,
-  endPreviewBackgroundColor,
-  isCalibrated
+  endPreviewBackgroundColor
 }) {
-  let pz = null
+  let panzoom = null
   const initialScale = ref(1)
-  const absMinScale = ref(null)
-  const absMaxScale = ref(null)
+  const minZoomScale = ref(null)
+  const maxZoomScale = ref(null)
   let lastWrapWidth = null
 
   const lastPointer = { x: null, y: null }
-  let pointerListenersAttached = false
+  let pointerListenersAdded = false
 
   function rememberPointer(e) {
     lastPointer.x = e.clientX
     lastPointer.y = e.clientY
   }
 
-  function getDisplayScaleBounds() {
-    const natW = basePixelWidth.value || 1
-    const referenceWidthCssPx = (referenceWidthMm.value / 25.4) * screenDPI.value
-    const minAbs = (absMinScale.value ?? ((initialScale.value || 1) * PZ_MIN_ZOOM))
-    const maxAbs = (absMaxScale.value ?? ((initialScale.value || 1) * PZ_MAX_ZOOM))
-    const minPct = (natW * minAbs / referenceWidthCssPx) * 100
-    const maxPct = (natW * maxAbs / referenceWidthCssPx) * 100
-    return { minPct, maxPct }
+  function getScaleLimits() {
+    const naturalWidth = basePixelWidth.value || 1
+    const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
+    const minScale = (minZoomScale.value ?? ((initialScale.value || 1) * PZ_MIN_ZOOM))
+    const maxScale = (maxZoomScale.value ?? ((initialScale.value || 1) * PZ_MAX_ZOOM))
+    const minPercent = (naturalWidth * minScale / referenceWidth) * 100
+    const maxPercent = (naturalWidth * maxScale / referenceWidth) * 100
+    return { minPercent, maxPercent }
   }
 
-  function recomputeScaleBounds() {
-    const { minPct, maxPct } = getDisplayScaleBounds()
-    minScalePct.value = minPct
-    maxScalePct.value = maxPct
+  function updateScaleLimits() {
+    const { minPercent, maxPercent } = getScaleLimits()
+    minScalePercent.value = minPercent
+    maxScalePercent.value = maxPercent
   }
 
   function updateDisplayScale() {
-    if (!pz || !basePixelWidth.value) return
+    if (!panzoom || !basePixelWidth.value) {
+      return
+    }
 
-    const currentTransform = pz.getTransform()
+    const currentTransform = panzoom.getTransform()
     const absoluteScale = initialScale.value * currentTransform.scale
-    const currentWidthCssPx = basePixelWidth.value * absoluteScale
-    const referenceWidthCssPx = (referenceWidthMm.value / 25.4) * screenDPI.value
+    const currentWidth = basePixelWidth.value * absoluteScale
+    const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
 
-    const pct = (currentWidthCssPx / referenceWidthCssPx) * 100
-    displayScale.value = pct
+    const percent = (currentWidth / referenceWidth) * 100
+    displayScale.value = percent
 
     emit('update:scale', {
       displayScale: displayScale.value,
       referenceWidthMm: referenceWidthMm.value,
       basePixelWidth: basePixelWidth.value,
-      minDisplayScale: minScalePct.value,
-      maxDisplayScale: maxScalePct.value,
+      minDisplayScale: minScalePercent.value,
+      maxDisplayScale: maxScalePercent.value,
     })
   }
 
   function setDisplayScale(newScale) {
-    if (!pz || !basePixelWidth.value) return
+    if (!panzoom || !basePixelWidth.value) {
+      return
+    }
 
-    const targetPct = Math.max(
-      minScalePct.value,
-      Math.min(maxScalePct.value, Number(newScale) || 0)
-    )
+    const newPercent = Math.max(minScalePercent.value, Math.min(maxScalePercent.value, Number(newScale) || 0))
+    const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
+    const newScreenWidth = (newPercent / 100) * referenceWidth
+    const newImageScale = newScreenWidth / basePixelWidth.value
+    const currentTransform = panzoom.getTransform()
+    const currentZoom = currentTransform.scale || 1
+    const minUserZoom = panzoom.getMinZoom ? panzoom.getMinZoom() : PZ_MIN_ZOOM
+    const maxUserZoom = panzoom.getMaxZoom ? panzoom.getMaxZoom() : PZ_MAX_ZOOM
 
-    const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value
-    const targetScreenWidthPx = (targetPct / 100) * referenceWidthPx
+    let newZoom = newImageScale / (initialScale.value || 1)
+    newZoom = Math.max(minUserZoom, Math.min(maxUserZoom, newZoom))
 
-    const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
-    const currentTransform = pz.getTransform()
-    const currentUserScale = currentTransform.scale || 1
-
-    let targetUserScale = targetAbsoluteScale / (initialScale.value || 1)
-
-    const minUserZoom = pz.getMinZoom ? pz.getMinZoom() : PZ_MIN_ZOOM
-    const maxUserZoom = pz.getMaxZoom ? pz.getMaxZoom() : PZ_MAX_ZOOM
-    targetUserScale = Math.max(minUserZoom, Math.min(maxUserZoom, targetUserScale))
-
-    const factor = targetUserScale / currentUserScale
-    if (!isFinite(factor) || Math.abs(factor - 1) < 1e-4) {
+    const zoomFactor = newZoom / currentZoom
+    if (!isFinite(zoomFactor) || Math.abs(zoomFactor - 1) < 1e-4) {
       return
     }
 
     const wrap = previewWrap.value
-    if (!wrap) return
+    if (!wrap) {
+      return
+    }
 
     const wrapRect = wrap.getBoundingClientRect()
-    const cx = wrapRect.left + wrapRect.width / 2
-    const cy = wrapRect.top + wrapRect.height / 2
-
-    pz.zoomTo(cx, cy, factor)
-
+    const centerX = wrapRect.left + wrapRect.width / 2
+    const centerY = wrapRect.top + wrapRect.height / 2
+    panzoom.zoomTo(centerX, centerY, zoomFactor)
     nextTick(() => updateDisplayScale())
   }
 
-  function setReferenceWidth(newWidthMm) {
-    referenceWidthMm.value = newWidthMm
-    recomputeScaleBounds()
+  function setReferenceWidth(newWidth) {
+    referenceWidthMm.value = newWidth
+    updateScaleLimits()
     updateDisplayScale()
   }
 
   async function initPanzoom() {
     await nextTick()
-    const elem = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (!elem) {
+    const el = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (!el) {
       return
     }
 
-    const natW = isPdf.value ? elem.width : elem.naturalWidth
-    const natH = isPdf.value ? elem.height : elem.naturalHeight
+    const naturalWidth = isPdf.value ? el.width : el.naturalWidth
+    const naturalHeight = isPdf.value ? el.height : el.naturalHeight
 
     const wrap = previewWrap.value
 
-    if (wrap && !pointerListenersAttached) {
+    if (wrap && !pointerListenersAdded) {
       wrap.addEventListener('mousemove', rememberPointer)
       wrap.addEventListener('mousedown', rememberPointer)
 
-      wrap.addEventListener(
-        'touchstart',
-        (ev) => {
-          const t = ev.touches && ev.touches[0]
-          if (t) rememberPointer(t)
-        },
-        { passive: true }
+      wrap.addEventListener('touchstart',(event) => {
+          const touch = event.touches && event.touches[0]
+          if (touch) {
+            rememberPointer(touch)
+          }
+        },{ passive: true }
       )
 
-      wrap.addEventListener(
-        'wheel',
-        (ev) => {
-          rememberPointer(ev)
-
-          if (ev.ctrlKey || ev.metaKey) {
+      wrap.addEventListener('wheel', (event) => {
+          rememberPointer(event)
+          if (event.ctrlKey || event.metaKey) {
             return
           }
 
-          ev.preventDefault()
-
+          event.preventDefault()
           const scrollSpeed = 0.5
-
-          if (pz) {
-            const dx = -ev.deltaX * scrollSpeed
-            const dy = -ev.deltaY * scrollSpeed
-
-            pz.moveBy(dx, dy)
+          if (panzoom) {
+            const dx = -event.deltaX * scrollSpeed
+            const dy = -event.deltaY * scrollSpeed
+            panzoom.moveBy(dx, dy)
           }
-        },
-        { passive: false }
+        },{ passive: false }
       )
 
-
-      pointerListenersAttached = true
+      pointerListenersAdded = true
     }
 
-    const scaleW = Math.floor(wrap.clientWidth) / natW
-    const scaleH = Math.floor(wrap.clientHeight) / natH
+    const scaleW = Math.floor(wrap.clientWidth) / naturalWidth
+    const scaleH = Math.floor(wrap.clientHeight) / naturalHeight
     initialScale.value = Math.min(scaleW, scaleH)
 
-    if (pz) {
-      pz.dispose()
-      pz = null
+    if (panzoom) {
+      panzoom.dispose()
+      panzoom = null
     }
 
-    panCont.value.style.transform = 'translate(0px, 0px) scale(1)'
+    canvasWrapper.value.style.transform = 'translate(0px, 0px) scale(1)'
+    canvasWrapper.value.style.width = `${naturalWidth * initialScale.value}px`
+    canvasWrapper.value.style.height = `${naturalHeight * initialScale.value}px`
+    minZoomScale.value = initialScale.value * PZ_MIN_ZOOM
+    maxZoomScale.value = initialScale.value * PZ_MAX_ZOOM
 
-    panCont.value.style.width = `${natW * initialScale.value}px`
-    panCont.value.style.height = `${natH * initialScale.value}px`
-
-    absMinScale.value = initialScale.value * PZ_MIN_ZOOM
-    absMaxScale.value = initialScale.value * PZ_MAX_ZOOM
-    pz = panzoom(panCont.value, {
-      minZoom: absMinScale.value / initialScale.value,
-      maxZoom: absMaxScale.value / initialScale.value,
+    panzoom = createPanzoom(canvasWrapper.value, {
+      minZoom: minZoomScale.value / initialScale.value,
+      maxZoom: maxZoomScale.value / initialScale.value,
       bounds: false,
       boundsPadding: 0.1,
       beforeWheel: function (e) {
@@ -195,36 +182,35 @@ export function usePanzoom({
       },
     })
 
-    pz.on('zoom', updateDisplayScale)
-    pz.on('pan', updateDisplayScale)
+    panzoom.on('zoom', updateDisplayScale)
+    panzoom.on('pan', updateDisplayScale)
 
     if (wrap) {
-      const contW = natW * initialScale.value
-      const contH = natH * initialScale.value
-      const offsetX = (wrap.clientWidth - contW) / 2
-      const offsetY = (wrap.clientHeight - contH) / 2
-      pz.moveTo(offsetX, offsetY)
+      const contentWidth = naturalWidth * initialScale.value
+      const contentHeight = naturalHeight * initialScale.value
+      const offsetX = (wrap.clientWidth - contentWidth) / 2
+      const offsetY = (wrap.clientHeight - contentHeight) / 2
+      panzoom.moveTo(offsetX, offsetY)
 
       lastWrapWidth = wrap.clientWidth
     }
 
-    markCanvas.value.width = natW
-    markCanvas.value.height = natH
-    const mctx = markCanvas.value.getContext('2d')
-    mctx.clearRect(0, 0, natW, natH)
+    markCanvas.value.width = naturalWidth
+    markCanvas.value.height = naturalHeight
+    const markContext = markCanvas.value.getContext('2d')
+    markContext.clearRect(0, 0, naturalWidth, naturalHeight)
     highlightOn.value = false
 
-    basePixelWidth.value = natW
-    recomputeScaleBounds()
+    basePixelWidth.value = naturalWidth
+    updateScaleLimits()
     updateDisplayScale()
     endPreviewBackgroundColor()
   }
 
-
-  function adjustForContainerResize() {
-    const elem = isPdf.value ? pdfCanvas.value : imgEl.value
+  function handleWrapperResize() {
+    const el = isPdf.value ? pdfCanvas.value : imgEl.value
     const wrap = previewWrap.value
-    if (!elem || !wrap || !panCont.value || !pz) {
+    if (!el || !wrap || !canvasWrapper.value || !panzoom) {
       return
     }
 
@@ -237,57 +223,57 @@ export function usePanzoom({
 
     const deltaW = newWrapWidth - lastWrapWidth
     lastWrapWidth = newWrapWidth
-
-    const t = pz.getTransform()
-
-    pz.moveTo(t.x + deltaW/2, t.y)
+    const transform = panzoom.getTransform()
+    panzoom.moveTo(transform.x + deltaW/2, transform.y)
 
     updateDisplayScale()
   }
 
-
   function disposePanzoom() {
-    if (pz) {
-      pz.dispose()
-      pz = null
+    if (panzoom) {
+      panzoom.dispose()
+      panzoom = null
     }
   }
 
   function getPanzoom() {
-    return pz
+    return panzoom
   }
 
   function centerImage() {
-    if (!pz) return
+    if (!panzoom) {
+      return
+    }
 
     const wrap = previewWrap.value
-    const elem = isPdf.value ? pdfCanvas.value : imgEl.value
-    if (!wrap || !elem) return
+    const el = isPdf.value ? pdfCanvas.value : imgEl.value
+    if (!wrap || !el) {
+      return
+    }
 
-    const natW = isPdf.value ? elem.width : elem.naturalWidth
-    const natH = isPdf.value ? elem.height : elem.naturalHeight
-
-    const currentTransform = pz.getTransform()
+    const naturalWidth = isPdf.value ? el.width : el.naturalWidth
+    const naturalHeight = isPdf.value ? el.height : el.naturalHeight
+    const currentTransform = panzoom.getTransform()
     const absoluteScale = initialScale.value * currentTransform.scale
 
-    const contW = natW * absoluteScale
-    const contH = natH * absoluteScale
-    const offsetX = (wrap.clientWidth - contW) / 2
-    const offsetY = (wrap.clientHeight - contH) / 2
+    const contentWidth = naturalWidth * absoluteScale
+    const contentHeight = naturalHeight * absoluteScale
+    const offsetX = (wrap.clientWidth - contentWidth) / 2
+    const offsetY = (wrap.clientHeight - contentHeight) / 2
 
-    pz.moveTo(offsetX, offsetY)
+    panzoom.moveTo(offsetX, offsetY)
   }
 
   return {
     initialScale,
-    absMinScale,
-    absMaxScale,
+    minZoomScale,
+    maxZoomScale,
     initPanzoom,
     updateDisplayScale,
     setDisplayScale,
     setReferenceWidth,
-    recomputeScaleBounds,
-    adjustForContainerResize,
+    updateScaleLimits,
+    handleWrapperResize,
     disposePanzoom,
     getPanzoom,
     centerImage,

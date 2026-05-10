@@ -24,9 +24,9 @@
                 min="1"
                 max="20"
                 step="1"
-                v-model.number="localThickness"
+                v-model.number="shapeThickness"
               />
-              <span class="value ty-body-medium">{{ localThickness }}px</span>
+              <span class="value ty-body-medium">{{ shapeThickness }}px</span>
             </label>
 
             <div class="color-row">
@@ -35,19 +35,19 @@
                 <input
                   type="text"
                   class="color-text ty-body-small"
-                  :value="localColor"
-                  @input="onColorInput"
+                  :value="shapeColor"
+                  @input="colorInput"
                   placeholder="#ff0000"
                 />
                 <div
                   class="color-box"
-                  :style="{ backgroundColor: localColor }"
+                  :style="{ backgroundColor: shapeColor }"
                   @click="openPicker"
                 ></div>
                 <input
                   ref="picker"
                   type="color"
-                  v-model="localColor"
+                  v-model="shapeColor"
                   class="native-picker"
                 />
               </div>
@@ -57,8 +57,8 @@
               <span class="ty-body-medium">Shape</span>
               <div class="shape-buttons">
                 <button
-                  :class="['shape-btn', { active: localShape === 'rect' }]"
-                  @click="localShape = 'rect'"
+                  :class="['shape-btn', { active: shapeType === 'rect' }]"
+                  @click="shapeType = 'rect'"
                   title="Rectangle"
                 >
                   <svg viewBox="0 0 24 24" width="20" height="20">
@@ -66,8 +66,8 @@
                   </svg>
                 </button>
                 <button
-                  :class="['shape-btn', { active: localShape === 'circle' }]"
-                  @click="localShape = 'circle'"
+                  :class="['shape-btn', { active: shapeType === 'circle' }]"
+                  @click="shapeType = 'circle'"
                   title="Ellipse"
                 >
                   <svg viewBox="0 0 24 24" width="20" height="20">
@@ -98,22 +98,13 @@
   })
 
   const emit = defineEmits(['toggle', 'update:thickness', 'update:color', 'update:shape'])
-
-  const localThickness = ref(props.thickness)
-  const localColor = ref(props.color)
-  const localShape = ref(props.shape)
+  const shapeThickness = ref(props.thickness)
+  const shapeColor = ref(props.color)
+  const shapeType = ref(props.shape)
   const picker = ref(null)
 
-  watch(() => props.thickness, v => (localThickness.value = v))
-  watch(() => props.color, v => (localColor.value = v))
-  watch(() => props.shape, v => (localShape.value = v))
-
-  watch(localThickness, v => emit('update:thickness', v))
-  watch(localColor, v => emit('update:color', v))
-  watch(localShape, v => emit('update:shape', v))
-
-  function onColorInput(e) {
-    localColor.value = e.target.value
+  function colorInput(e) {
+    shapeColor.value = e.target.value
   }
 
   function openPicker() {
@@ -123,7 +114,6 @@
   const onEnter = (el) => {
     el.style.height = '0px'
     el.style.opacity = '0'
-
     const target = el.scrollHeight
 
     requestAnimationFrame(() => {
@@ -147,6 +137,14 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  watch(() => props.thickness, v => (shapeThickness.value = v))
+  watch(() => props.color, v => (shapeColor.value = v))
+  watch(() => props.shape, v => (shapeType.value = v))
+
+  watch(shapeThickness, v => emit('update:thickness', v))
+  watch(shapeColor, v => emit('update:color', v))
+  watch(shapeType, v => emit('update:shape', v))
 </script>
 
 <style scoped>

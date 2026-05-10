@@ -1,24 +1,24 @@
 import { ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument } from 'pdf-lib'
-import { hexToRgb, rgbToHex, dataURLtoU8, canvasHasAlpha } from '../utils/imageProcessing'
+import { hexToRgb, rgbToHex, dataURLtoU8, canvasHasAlpha } from './imageProcessing'
 
 const { getDocument } = pdfjsLib
 
-const PDF_RASTER_OPS_DPI = 600
+const PDF_EXPORT_DPI = 600
 const MAX_CANVAS_PIXELS = 25e6
 
 export function useBackground({
   isPdf,
   pdfCanvas,
   imgEl,
-  origBg,
+  originalBackground,
   emit,
   hasAlpha,
   checkerOn,
-  panCont,
+  canvasWrapper,
   madeTransparentPdf,
-  madeTransparentImg,
+  imgTransparent,
   originalFileName,
   originalFileType,
   preview,
@@ -42,13 +42,15 @@ export function useBackground({
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) return null
+    if (!img?.naturalWidth) {
+      return null
+    }
 
-    const off = document.createElement('canvas')
-    off.width = img.naturalWidth
-    off.height = img.naturalHeight
-    off.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
-    return off
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = img.naturalWidth
+    tempCanvas.height = img.naturalHeight
+    tempCanvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    return tempCanvas
   }
 
   function detectBackground() {
@@ -58,204 +60,241 @@ export function useBackground({
       src = pdfCanvas.value
     } else if (imgEl.value?.naturalWidth) {
       const img = imgEl.value
-      const off = document.createElement('canvas')
-      off.width = img.naturalWidth
-      off.height = img.naturalHeight
-      off.getContext('2d').drawImage(img, 0, 0)
-      src = off
+      const tempCanvas = document.createElement('canvas')
+
+      tempCanvas.width = img.naturalWidth
+      tempCanvas.height = img.naturalHeight
+      tempCanvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+      src = tempCanvas
     } else {
       return
     }
 
-    const W = src.width
-    const H = src.height
-    if (!W || !H) return
+    const width = src.width
+    const height = src.height
+    if (!width || !height) {
+      return
+    }
 
-    const ctx = src.getContext('2d', { willReadFrequently: true })
-    const inset = Math.max(1, Math.round(Math.min(W, H) * 0.01))
-    const step = Math.max(1, Math.floor(Math.min(W, H) / 80))
-    const A_MIN = 8
+    const context = src.getContext('2d', { willReadFrequently: true })
+    const inset = Math.max(1, Math.round(Math.min(width, height) * 0.01))
+    const step = Math.max(1, Math.floor(Math.min(width, height) / 80))
+    const MIN_ALPHA = 8
 
-    const q = (v) => v >> 4
-    const keyOf = (r, g, b) => (q(r) << 8) | (q(g) << 4) | q(b)
+    const quantize = (v) => v >> 4
+    const keyOf = (r, g, b) => (quantize(r) << 8) | (quantize(g) << 4) | quantize(b)
     const sums = new Map()
 
     const sampleRow = (y) => {
-      const row = ctx.getImageData(0, y, W, 1).data
-      for (let x = 0; x < W; x += step) {
+      const row = context.getImageData(0, y, width, 1).data
+      for (let x = 0; x < width; x += step) {
         const i = x * 4
         const a = row[i + 3]
-        if (a <= A_MIN) continue
+
+        if (a <= MIN_ALPHA) {
+          continue
+        }
+
         const r = row[i]
         const g = row[i + 1]
         const b = row[i + 2]
         const k = keyOf(r, g, b)
-        let s = sums.get(k)
-        if (!s) {
-          s = { count: 0, R: 0, G: 0, B: 0 }
-          sums.set(k, s)
+        let bucket = sums.get(k)
+
+        if (!bucket) {
+          bucket = { count: 0, R: 0, G: 0, B: 0 }
+          sums.set(k, bucket)
         }
-        s.count++
-        s.R += r
-        s.G += g
-        s.B += b
+
+        bucket.count++
+        bucket.R += r
+        bucket.G += g
+        bucket.B += b
       }
     }
 
     const sampleCol = (x) => {
-      const col = ctx.getImageData(x, 0, 1, H).data
-      for (let y = 0; y < H; y += step) {
+      const col = context.getImageData(x, 0, 1, height).data
+      for (let y = 0; y < height; y += step) {
         const i = y * 4
         const a = col[i + 3]
-        if (a <= A_MIN) continue
+
+        if (a <= MIN_ALPHA) {
+          continue
+        }
+
         const r = col[i]
         const g = col[i + 1]
         const b = col[i + 2]
         const k = keyOf(r, g, b)
-        let s = sums.get(k)
-        if (!s) {
-          s = { count: 0, R: 0, G: 0, B: 0 }
-          sums.set(k, s)
+        let bucket = sums.get(k)
+
+        if (!bucket) {
+          bucket = { count: 0, R: 0, G: 0, B: 0 }
+          sums.set(k, bucket)
         }
-        s.count++
-        s.R += r
-        s.G += g
-        s.B += b
+
+        bucket.count++
+        bucket.R += r
+        bucket.G += g
+        bucket.B += b
       }
     }
 
     sampleRow(inset)
-    sampleRow(Math.max(inset, H - 1 - inset))
+    sampleRow(Math.max(inset, height - 1 - inset))
     sampleCol(inset)
-    sampleCol(Math.max(inset, W - 1 - inset))
+    sampleCol(Math.max(inset, width - 1 - inset))
 
-    if (sums.size === 0) return
+    if (sums.size === 0) {
+      return
+    }
 
-    let bestKey = null
-    let bestCount = -1
-    for (const [k, s] of sums.entries()) {
-      if (s.count > bestCount) {
-        bestCount = s.count
-        bestKey = k
+    let mainColorKey = null
+    let mainColorCount = -1
+    for (const [k, bucket] of sums.entries()) {
+      if (bucket.count > mainColorCount) {
+        mainColorCount = bucket.count
+        mainColorKey = k
       }
     }
 
-    const s = sums.get(bestKey)
-    const r = Math.round(s.R / s.count)
-    const g = Math.round(s.G / s.count)
-    const b = Math.round(s.B / s.count)
+    const mainColorBucket = sums.get(mainColorKey)
+    const r = Math.round(mainColorBucket.R / mainColorBucket.count)
+    const g = Math.round(mainColorBucket.G / mainColorBucket.count)
+    const b = Math.round(mainColorBucket.B / mainColorBucket.count)
 
-    origBg.value = { r, g, b }
-    emit('update:bgcolor', rgbToHex(origBg.value))
+    originalBackground.value = { r, g, b }
+    emit('update:bgcolor', rgbToHex(originalBackground.value))
   }
 
-  function deblendToTransparent(canvas, bgRGB) {
+  function makeBackgroundTransparent(canvas, bgRGB) {
     const context = canvas.getContext('2d', { willReadFrequently: true })
     const { width, height } = canvas
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    const bgMask = new Uint8Array(width * height)
-    const TOLERANCE_SQ = 2500
-    const STRICT_TOLERANCE_SQ = 300
+    const backgroundMask = new Uint8Array(width * height)
+    const BACKGROUND_LIMIT = 2500
+    const BACKGROUND_CORE_LIMIT = 300
 
-    const distSqToBg = (r, g, b) => {
-      const dr = r - bgRGB.r
-      const dg = g - bgRGB.g
-      const db = b - bgRGB.b
-      return dr * dr + dg * dg + db * db
+    const colorDifferenceFromBackground = (r, g, b) => { 
+      const redDiff = r - bgRGB.r
+      const greenDiff = g - bgRGB.g
+      const blueDiff = b - bgRGB.b
+      return redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff
     }
 
-    const isBgColor = (idx) => {
-      const r = data[idx]
-      const g = data[idx + 1]
-      const b = data[idx + 2]
-      const a = data[idx + 3]
-      if (a < 10) return true
-      return distSqToBg(r, g, b) <= TOLERANCE_SQ
+    const isBackgroundColor = (index) => {
+      const r = data[index]
+      const g = data[index + 1]
+      const b = data[index + 2]
+      const a = data[index + 3]
+
+      if (a < 10) {
+        return true
+      }
+      return colorDifferenceFromBackground(r, g, b) <= BACKGROUND_LIMIT
     }
 
-    const isStrictBgColor = (idx) => {
-      const r = data[idx]
-      const g = data[idx + 1]
-      const b = data[idx + 2]
-      const a = data[idx + 3]
-      if (a < 10) return true
-      return distSqToBg(r, g, b) <= STRICT_TOLERANCE_SQ
+    const isBackgroundCore = (index) => {
+      const r = data[index]
+      const g = data[index + 1]
+      const b = data[index + 2]
+      const a = data[index + 3]
+
+      if (a < 10) {
+        return true
+      }
+      return colorDifferenceFromBackground(r, g, b) <= BACKGROUND_CORE_LIMIT
     }
 
     const queue = []
 
     for (let x = 0; x < width; x++) {
-      const topIdx = x * 4
-      const bottomIdx = ((height - 1) * width + x) * 4
-      if (isBgColor(topIdx) && !bgMask[x]) {
-        bgMask[x] = 1
+      const topIndex = x * 4
+      const bottomIndex = ((height - 1) * width + x) * 4
+
+      if (isBackgroundColor(topIndex) && !backgroundMask[x]) {
+        backgroundMask[x] = 1
         queue.push(x)
       }
-      const bottomPix = (height - 1) * width + x
-      if (isBgColor(bottomIdx) && !bgMask[bottomPix]) {
-        bgMask[bottomPix] = 1
-        queue.push(bottomPix)
+      const bottomPixel = (height - 1) * width + x
+
+      if (isBackgroundColor(bottomIndex) && !backgroundMask[bottomPixel]) {
+        backgroundMask[bottomPixel] = 1
+        queue.push(bottomPixel)
       }
     }
+    
     for (let y = 0; y < height; y++) {
-      const leftIdx = (y * width) * 4
-      const rightIdx = (y * width + width - 1) * 4
-      const leftPix = y * width
-      const rightPix = y * width + width - 1
-      if (isBgColor(leftIdx) && !bgMask[leftPix]) {
-        bgMask[leftPix] = 1
-        queue.push(leftPix)
+      const leftIndex = (y * width) * 4
+      const rightIndex = (y * width + width - 1) * 4
+      const leftPixel = y * width
+      const rightPixel = y * width + width - 1
+
+      if (isBackgroundColor(leftIndex) && !backgroundMask[leftPixel]) {
+        backgroundMask[leftPixel] = 1
+        queue.push(leftPixel)
       }
-      if (isBgColor(rightIdx) && !bgMask[rightPix]) {
-        bgMask[rightPix] = 1
-        queue.push(rightPix)
+
+      if (isBackgroundColor(rightIndex) && !backgroundMask[rightPixel]) {
+        backgroundMask[rightPixel] = 1
+        queue.push(rightPixel)
       }
     }
 
     while (queue.length > 0) {
-      const pix = queue.shift()
-      const x = pix % width
-      const y = Math.floor(pix / width)
+      const pixel = queue.shift()
+      const x = pixel % width
+      const y = Math.floor(pixel / width)
 
       const neighbors = [
-        { nx: x - 1, ny: y },
-        { nx: x + 1, ny: y },
-        { nx: x, ny: y - 1 },
-        { nx: x, ny: y + 1 }
+        { nextX: x - 1, nextY: y },
+        { nextX: x + 1, nextY: y },
+        { nextX: x, nextY: y - 1 },
+        { nextX: x, nextY: y + 1 }
       ]
 
-      for (const { nx, ny } of neighbors) {
-        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
-        const nPix = ny * width + nx
-        if (bgMask[nPix]) continue
-        const nIdx = nPix * 4
-        if (isBgColor(nIdx)) {
-          bgMask[nPix] = 1
-          queue.push(nPix)
+      for (const { nextX, nextY } of neighbors) {
+        if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
+          continue
+        }
+
+        const nextPixel = nextY * width + nextX
+        if (backgroundMask[nextPixel]) {
+          continue
+        }
+
+        const nextIndex = nextPixel * 4
+        if (isBackgroundColor(nextIndex)) {
+          backgroundMask[nextPixel] = 1
+          queue.push(nextPixel)
         }
       }
     }
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const pix = y * width + x
-        if (bgMask[pix]) continue
-        const idx = pix * 4
-        if (isStrictBgColor(idx)) {
-          bgMask[pix] = 1
+        const pixel = y * width + x
+        if (backgroundMask[pixel]) {
+          continue
+        }
+
+        const index = pixel * 4
+        if (isBackgroundCore(index)) {
+          backgroundMask[pixel] = 1
         }
       }
     }
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const pix = y * width + x
-        const idx = pix * 4
+        const pixel = y * width + x
+        const index = pixel * 4
 
-        if (bgMask[pix]) {
-          data[idx + 3] = 0
+        if (backgroundMask[pixel]) {
+          data[index + 3] = 0
         }
       }
     }
@@ -264,108 +303,126 @@ export function useBackground({
     return canvas.toDataURL('image/png')
   }
 
-  function recolorFlatBackground(canvas, bgRGB, newHexColor) {
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  function changeBackgroundColor(canvas, bgRGB, newHexColor) {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
     const { width, height } = canvas
-    const imageData = ctx.getImageData(0, 0, width, height)
+    const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    const bg = bgRGB || { r: data[0], g: data[1], b: data[2] }
-    const newBg = hexToRgb(newHexColor)
-    if (!newBg) return canvas.toDataURL('image/png')
+    const background = bgRGB || { r: data[0], g: data[1], b: data[2] }
+    const newBackground = hexToRgb(newHexColor)
+    if (!newBackground) {
+      return canvas.toDataURL('image/png')
+    }
 
-    const SEED_DIST_SQ = 140
-    const HALO_DIST_SQ = 100000
+    const COLOR_LIMIT = 140
+    const SOFT_EDGE_LIMIT = 100000
     const NEAR_RADIUS = 2
 
-    const seedMask = new Uint8Array(width * height)
+    const backgroundPixels = new Uint8Array(width * height)
 
-    const distSqToBg = (r, g, b) => {
-      const dr = r - bg.r
-      const dg = g - bg.g
-      const db = b - bg.b
-      return dr * dr + dg * dg + db * db
+    const colorDifferenceFromBackground = (r, g, b) => {
+      const redDiff = r - background.r
+      const greenDiff = g - background.g
+      const blueDiff = b - background.b
+      return redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff
     }
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const idx = (y * width + x) * 4
-        const a = data[idx + 3]
-        if (a === 0) continue
-        const r = data[idx]
-        const g = data[idx + 1]
-        const b = data[idx + 2]
-        if (distSqToBg(r, g, b) <= SEED_DIST_SQ) {
-          seedMask[y * width + x] = 1
+        const index = (y * width + x) * 4
+        const a = data[index + 3]
+
+        if (a === 0) {
+          continue
+        }
+
+        const r = data[index]
+        const g = data[index + 1]
+        const b = data[index + 2]
+
+        if (colorDifferenceFromBackground(r, g, b) <= COLOR_LIMIT) {
+          backgroundPixels[y * width + x] = 1
         }
       }
     }
 
-    const mix = (c, target, t) => Math.round(c + (target - c) * t)
+    const mixColor = (currentColor, target, t) => Math.round(currentColor + (target - currentColor) * t)
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
-        const pix = y * width + x
-        const idx = pix * 4
+        const pixel = y * width + x
+        const index = pixel * 4
 
-        const a = data[idx + 3]
-        if (a === 0) continue
-
-        const r = data[idx]
-        const g = data[idx + 1]
-        const b = data[idx + 2]
-
-        const d2 = distSqToBg(r, g, b)
-
-        if (d2 <= SEED_DIST_SQ) {
-          data[idx] = newBg.r
-          data[idx + 1] = newBg.g
-          data[idx + 2] = newBg.b
-          data[idx + 3] = 255
+        const a = data[index + 3]
+        if (a === 0) {
           continue
         }
 
-        if (d2 > HALO_DIST_SQ) {
+        const r = data[index]
+        const g = data[index + 1]
+        const b = data[index + 2]
+
+        const colorDifference = colorDifferenceFromBackground(r, g, b)
+
+        if (colorDifference <= COLOR_LIMIT) {
+          data[index] = newBackground.r
+          data[index + 1] = newBackground.g
+          data[index + 2] = newBackground.b
+          data[index + 3] = 255
           continue
         }
 
-        let nearSeed = false
-        for (let dy = -NEAR_RADIUS; dy <= NEAR_RADIUS && !nearSeed; dy++) {
-          const ny = y + dy
-          if (ny < 0 || ny >= height) continue
+        if (colorDifference > SOFT_EDGE_LIMIT) {
+          continue
+        }
+
+        let nearBackground = false
+        for (let dy = -NEAR_RADIUS; dy <= NEAR_RADIUS && !nearBackground; dy++) {
+          const nextY = y + dy
+          if (nextY < 0 || nextY >= height) {
+            continue
+          }
+
           for (let dx = -NEAR_RADIUS; dx <= NEAR_RADIUS; dx++) {
-            const nx = x + dx
-            if (nx < 0 || nx >= width) continue
-            if (dx === 0 && dy === 0) continue
-            if (seedMask[ny * width + nx]) {
-              nearSeed = true
+            const nextX = x + dx
+            if (nextX < 0 || nextX >= width || (dx === 0 && dy === 0)) {
+              continue
+            }
+
+            if (backgroundPixels[nextY * width + nextX]) {
+              nearBackground = true
               break
             }
           }
         }
 
-        if (!nearSeed) continue
+        if (!nearBackground) {
+          continue
+        }
 
-        const t = (HALO_DIST_SQ - d2) / (HALO_DIST_SQ - SEED_DIST_SQ)
+        const ratio = (SOFT_EDGE_LIMIT - colorDifference) / (SOFT_EDGE_LIMIT - COLOR_LIMIT)
         const strength = 0.85
-        data[idx] = mix(r, newBg.r, t * strength)
-        data[idx + 1] = mix(g, newBg.g, t * strength)
-        data[idx + 2] = mix(b, newBg.b, t * strength)
+        data[index] = mixColor(r, newBackground.r, ratio * strength)
+        data[index + 1] = mixColor(g, newBackground.g, ratio * strength)
+        data[index + 2] = mixColor(b, newBackground.b, ratio * strength)
       }
     }
 
-    ctx.putImageData(imageData, 0, 0)
+    context.putImageData(imageData, 0, 0)
     return canvas.toDataURL('image/png')
   }
 
   async function removeBackground() {
     if (!isPdf.value && imgEl.value) {
       const img = imgEl.value
+
       if (img.naturalWidth) {
         const checkCanvas = document.createElement('canvas')
         checkCanvas.width = img.naturalWidth
         checkCanvas.height = img.naturalHeight
         checkCanvas.getContext('2d').drawImage(img, 0, 0)
+
         if (canvasHasAlpha(checkCanvas)) {
           return
         }
@@ -376,44 +433,41 @@ export function useBackground({
 
     if (isPdf.value) {
       const pdf = await getDocument({ data: pdfBytes() }).promise
-      const outDoc = await PDFDocument.create()
-      const bg = origBg.value
+      const croppedPdf = await PDFDocument.create()
+      const background = originalBackground.value
 
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p)
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
 
-        const vp1 = page.getViewport({ scale: 1 })
-        const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-        const maxScaleByPixels =
-          Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+        const defaultViewport = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
         const scale = Math.min(dpiScale, maxScaleByPixels)
-        const vp = page.getViewport({ scale })
+        const exportViewport = page.getViewport({ scale })
 
-        const off = document.createElement('canvas')
-        off.width = Math.round(vp.width)
-        off.height = Math.round(vp.height)
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = Math.round(exportViewport.width)
+        tempCanvas.height = Math.round(exportViewport.height)
 
         await page.render({
-          canvasContext: off.getContext('2d', { willReadFrequently: true }),
-          viewport: vp,
+          canvasContext: tempCanvas.getContext('2d', { willReadFrequently: true }),
+          viewport: exportViewport,
           background: 'rgba(0,0,0,0)',
         }).promise
 
-        const dataUrl = deblendToTransparent(off, bg)
+        const dataUrl = makeBackgroundTransparent(tempCanvas, background)
         const pngBytes = dataURLtoU8(dataUrl)
-        const pngImg = await outDoc.embedPng(pngBytes)
+        const pngImg = await croppedPdf.embedPng(pngBytes)
 
-        const wPt = vp1.width
-        const hPt = vp1.height
-        const outPage = outDoc.addPage([wPt, hPt])
-        outPage.drawImage(pngImg, { x: 0, y: 0, width: wPt, height: hPt })
+        const pageWidth = defaultViewport.width
+        const pageHeight = defaultViewport.height
+        const newPage = croppedPdf.addPage([pageWidth, pageHeight])
+        newPage.drawImage(pngImg, { x: 0, y: 0, width: pageWidth, height: pageHeight })
       }
 
-      const newBytes = await outDoc.save()
+      const newBytes = await croppedPdf.save()
       originalPdf.value = newBytes
-      preview.value = URL.createObjectURL(
-        new Blob([newBytes], { type: 'application/pdf' }),
-      )
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
@@ -430,18 +484,15 @@ export function useBackground({
     const img = imgEl.value
     if (!img?.naturalWidth) return
 
-    const w = img.naturalWidth
-    const h = img.naturalHeight
-    const off = document.createElement('canvas')
-    off.width = w
-    off.height = h
-    off
-      .getContext('2d', { willReadFrequently: true })
-      .drawImage(img, 0, 0, w, h)
+    const width = img.naturalWidth
+    const height = img.naturalHeight
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = width
+    tempCanvas.height = height
+    tempCanvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, width, height)
 
-    const dataUrl = deblendToTransparent(off, origBg.value)
+    const dataUrl = makeBackgroundTransparent(tempCanvas, originalBackground.value)
     preview.value = dataUrl
-
     transparentBase.value = dataUrl
 
     emit('update:preview', dataUrl)
@@ -449,14 +500,13 @@ export function useBackground({
       name: originalFileName.value,
       type: originalFileType.value,
       size: atob(dataUrl.split(',')[1]).length,
-      width: w,
-      height: h,
+      width,
+      height,
       lastModified: Date.now(),
     })
-
     emit('update:bgcolor', null)
 
-    madeTransparentImg.value = true
+    imgTransparent.value = true
     checkerOn.value = true
     setHasAlpha(true)
   }
@@ -465,12 +515,13 @@ export function useBackground({
     return new Promise((resolve, reject) => {
       const img = new Image()
       img.onload = () => {
-        const c = document.createElement('canvas')
-        c.width = img.naturalWidth || img.width
-        c.height = img.naturalHeight || img.height
-        c.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
-        resolve(c)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.naturalWidth || img.width
+        canvas.height = img.naturalHeight || img.height
+        canvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+        resolve(canvas)
       }
+
       img.onerror = reject
       img.src = dataUrl
     })
@@ -492,43 +543,28 @@ export function useBackground({
       src = getSourceCanvas()
     }
 
-    if (!src || !previewImg.value) return
+    if (!src || !previewImg.value) {
+      return
+    }
 
-    const srcHasAlpha = canvasHasAlpha(src) || hasAlpha.value || madeTransparentImg.value
+    const srcHasAlpha = canvasHasAlpha(src) || hasAlpha.value || imgTransparent.value
+    const MAX_PREVIEW_PIXELS = 2e6
+    const scale = Math.min(1, Math.sqrt(MAX_PREVIEW_PIXELS / (src.width * src.height)) || 1)
+    const previewWidth = Math.max(1, Math.round(src.width * scale))
+    const previewHeight = Math.max(1, Math.round(src.height * scale))
+
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = previewWidth
+    tempCanvas.height = previewHeight
+    tempCanvas.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, previewWidth, previewHeight)
 
     let dataUrl
 
     if (!srcHasAlpha) {
-      const MAX_PREV_PX = 2e6
-      const scale =
-        Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
-      const w = Math.max(1, Math.round(src.width * scale))
-      const h = Math.max(1, Math.round(src.height * scale))
-
-      const off = document.createElement('canvas')
-      off.width = w
-      off.height = h
-      off
-        .getContext('2d', { willReadFrequently: true })
-        .drawImage(src, 0, 0, w, h)
-
-      dataUrl = recolorFlatBackground(off, origBg.value, hexColor)
+      dataUrl = changeBackgroundColor(tempCanvas, originalBackground.value, hexColor)
       previewImg.value.style.backgroundColor = ''
     } else {
-      const MAX_PREV_PX = 2e6
-      const scale =
-        Math.min(1, Math.sqrt(MAX_PREV_PX / (src.width * src.height)) || 1)
-      const w = Math.max(1, Math.round(src.width * scale))
-      const h = Math.max(1, Math.round(src.height * scale))
-
-      const off = document.createElement('canvas')
-      off.width = w
-      off.height = h
-      off
-        .getContext('2d', { willReadFrequently: true })
-        .drawImage(src, 0, 0, w, h)
-
-      dataUrl = off.toDataURL('image/png')
+      dataUrl = tempCanvas.toDataURL('image/png')
       previewImg.value.style.backgroundColor = hexColor
     }
 
@@ -542,6 +578,7 @@ export function useBackground({
       previewImg.value.src = ''
       previewImg.value.style.backgroundColor = ''
     }
+
     if (previewType.value === 'bgcolor') {
       previewOn.value = false
       previewType.value = null
@@ -554,111 +591,90 @@ export function useBackground({
 
     if (isPdf.value) {
       const bytes = pdfBytes()
-      let srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+      let sourcePdf
       try {
-        srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+        sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
       } catch (e) {
         console.error('Failed to load PDF in setBackgroundColor:', e)
         return
       }
 
-      const pageCount = srcDoc.getPageCount()
-      const pdfJsDoc = await getDocument({ data: bytes }).promise
-      const outDoc = await PDFDocument.create()
+      const croppedPdf = await PDFDocument.create()
+      const pageCount = sourcePdf.getPageCount()
+      const renderedPdf = await getDocument({ data: bytes }).promise
+      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
+      const oldBackground = originalBackground.value || { r: 255, g: 255, b: 255 }
+      const rasterPage = await renderedPdf.getPage(activeIndex + 1)
 
-      const activeIndex = Math.min(
-        Math.max((currentPage.value || 1) - 1, 0),
-        pageCount - 1,
-      )
-
-      const bgForDeblend = origBg.value || { r: 255, g: 255, b: 255 }
-      const jsPage = await pdfJsDoc.getPage(activeIndex + 1)
-
-      const vp1 = jsPage.getViewport({ scale: 1 })
-      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-      const maxScaleByPixels =
-        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const defaultViewport = rasterPage.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
+      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
       const scale = Math.min(dpiScale, maxScaleByPixels)
-      const vp = jsPage.getViewport({ scale })
+      const exportViewport = rasterPage.getViewport({ scale })
 
-      const off = document.createElement('canvas')
-      off.width = Math.round(vp.width)
-      off.height = Math.round(vp.height)
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = Math.round(exportViewport.width)
+      tempCanvas.height = Math.round(exportViewport.height)
 
-      await jsPage.render({
-        canvasContext: off.getContext('2d', {
-          willReadFrequently: true,
-          alpha: true,
-        }),
-        viewport: vp,
+      await rasterPage.render({
+        canvasContext: tempCanvas.getContext('2d', {willReadFrequently: true, alpha: true}),
+        viewport: exportViewport,
         background: 'rgba(0,0,0,0)',
       }).promise
 
-      const rasterHasAlpha = canvasHasAlpha(off)
-
+      const rasterHasAlpha = canvasHasAlpha(tempCanvas)
       let pngImg
+
       if (!rasterHasAlpha) {
-        const dataUrl = recolorFlatBackground(off, bgForDeblend, hexColor)
+        const dataUrl = changeBackgroundColor(tempCanvas, oldBackground, hexColor)
         const pngBytes = dataURLtoU8(dataUrl)
-        pngImg = await outDoc.embedPng(pngBytes)
+        pngImg = await croppedPdf.embedPng(pngBytes)
       } else {
-        const matte = document.createElement('canvas')
-        matte.width = off.width
-        matte.height = off.height
-        const mctx = matte.getContext('2d', { willReadFrequently: true })
+        const backgroundCanvas = document.createElement('canvas')
+        backgroundCanvas.width = tempCanvas.width
+        backgroundCanvas.height = tempCanvas.height
+        const markContext = backgroundCanvas.getContext('2d', { willReadFrequently: true })
 
-        mctx.fillStyle = hexColor
-        mctx.fillRect(0, 0, matte.width, matte.height)
-        mctx.drawImage(off, 0, 0)
-
-        const pngBytes = dataURLtoU8(matte.toDataURL('image/png'))
-        pngImg = await outDoc.embedPng(pngBytes)
+        markContext.fillStyle = hexColor
+        markContext.fillRect(0, 0, backgroundCanvas.width, backgroundCanvas.height)
+        markContext.drawImage(tempCanvas, 0, 0)
+        const pngBytes = dataURLtoU8(backgroundCanvas.toDataURL('image/png'))
+        pngImg = await croppedPdf.embedPng(pngBytes)
       }
 
-      const pageIndices = srcDoc.getPageIndices()
-      const copiedPages = await outDoc.copyPages(srcDoc, pageIndices)
+      const pageIndices = sourcePdf.getPageIndices()
+      const copiedPages = await croppedPdf.copyPages(sourcePdf, pageIndices)
 
       for (let i = 0; i < copiedPages.length; i++) {
         const page = copiedPages[i]
-
         if (i === activeIndex) {
           const { width: pw, height: ph } = page.getSize()
-          page.drawImage(pngImg, {
-            x: 0,
-            y: 0,
-            width: pw,
-            height: ph,
-          })
+          page.drawImage(pngImg, { x: 0, y: 0, width: pw, height: ph })
         }
 
-        outDoc.addPage(page)
+        croppedPdf.addPage(page)
       }
 
-      const newBytes = await outDoc.save()
+      const newBytes = await croppedPdf.save()
       originalPdf.value = newBytes
 
       if (preview.value && preview.value.startsWith('blob:')) {
         URL.revokeObjectURL(preview.value)
       }
 
-      preview.value = URL.createObjectURL(
-        new Blob([newBytes], { type: 'application/pdf' }),
-      )
-
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
-
       emit('update:preview', preview.value)
       emit('update:bgcolor', hexColor)
 
-      origBg.value = hexToRgb(hexColor)
-
+      originalBackground.value = hexToRgb(hexColor)
       madeTransparentPdf.value = false
       checkerOn.value = false
       setHasAlpha(false)
 
-      if (panCont.value) {
-        panCont.value.style.backgroundColor = hexColor
+      if (canvasWrapper.value) {
+        canvasWrapper.value.style.backgroundColor = hexColor
       }
 
       await renderPdfPage(currentPage.value)
@@ -666,7 +682,6 @@ export function useBackground({
     }
 
     let src
-
     if (transparentBase.value) {
       try {
         src = await canvasFromDataUrl(transparentBase.value)
@@ -677,7 +692,9 @@ export function useBackground({
 
     if (!src) {
       const img = imgEl.value
-      if (!img?.naturalWidth) return
+      if (!img?.naturalWidth) {
+        return
+      }
 
       src = document.createElement('canvas')
       src.width = img.naturalWidth
@@ -685,11 +702,9 @@ export function useBackground({
       src.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
     }
 
-    const w = src.width
-    const h = src.height
-
-    const srcHasAlpha =
-      canvasHasAlpha(src) || hasAlpha.value || madeTransparentImg.value
+    const width = src.width
+    const height = src.height
+    const srcHasAlpha = canvasHasAlpha(src) || hasAlpha.value || imgTransparent.value
 
     if (srcHasAlpha && !transparentBase.value) {
       try {
@@ -701,48 +716,46 @@ export function useBackground({
 
     let newSrc
     if (!srcHasAlpha) {
-      newSrc = recolorFlatBackground(src, origBg.value, hexColor)
+      newSrc = changeBackgroundColor(src, originalBackground.value, hexColor)
       setHasAlpha(false)
-      madeTransparentImg.value = false
+      imgTransparent.value = false
     } else {
-      const matte = document.createElement('canvas')
-      matte.width = w
-      matte.height = h
-      const mctx = matte.getContext('2d', { willReadFrequently: true })
+      const backgroundCanvas = document.createElement('canvas')
+      backgroundCanvas.width = width
+      backgroundCanvas.height = height
+      const markContext = backgroundCanvas.getContext('2d', { willReadFrequently: true })
 
-      mctx.fillStyle = hexColor
-      mctx.fillRect(0, 0, w, h)
-      mctx.drawImage(src, 0, 0)
+      markContext.fillStyle = hexColor
+      markContext.fillRect(0, 0, width, height)
+      markContext.drawImage(src, 0, 0)
 
-      newSrc = matte.toDataURL('image/png')
+      newSrc = backgroundCanvas.toDataURL('image/png')
       setHasAlpha(true)
-      madeTransparentImg.value = false
+      imgTransparent.value = false
     }
 
     preview.value = newSrc
     emit('update:preview', newSrc)
     emit('update:bgcolor', hexColor)
     emit('update:meta', {
-      name:
-        (originalFileName.value || 'image').replace(/\.[^.]+$/, '') +
-        '-matte.png',
+      name:(originalFileName.value || 'image').replace(/\.[^.]+$/, '') + '-backgroundCanvas.png',
       type: 'image/png',
-      size: atob(newSrc.split(',')[1]).length,
-      width: w,
-      height: h,
+      size: atob(newSrc.split(',')[1]).length, width, height,
       lastModified: Date.now(),
     })
 
-    origBg.value = hexToRgb(hexColor)
+    originalBackground.value = hexToRgb(hexColor)
     checkerOn.value = false
-    if (panCont.value) panCont.value.style.backgroundColor = hexColor
+    if (canvasWrapper.value) {
+      canvasWrapper.value.style.backgroundColor = hexColor
+    }
   }
-
 
   function clearBackgroundState() {
     transparentBase.value = null
     previewOn.value = false
     previewType.value = null
+
     if (previewImg.value) {
       previewImg.value.src = ''
       previewImg.value.style.backgroundColor = ''

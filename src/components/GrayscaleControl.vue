@@ -45,61 +45,38 @@
   import { ref, watch, onBeforeUnmount } from 'vue'
   import grayscaleIcon from '@/assets/grayscale.svg'
 
+  const intensity = ref(0)
+  const emit = defineEmits(['apply-grayscale', 'preview', 'end-preview', 'toggle'])
+
   const props = defineProps({
     meta: Object,
     isOpen: { type: Boolean, default: false },
     appliedStrength: { type: Number, default: null }
   })
 
-  const intensity = ref(0)
-  const emit = defineEmits(['apply-grayscale', 'preview', 'end-preview', 'toggle'])
-
-  function strengthFromPct (pct) {
-    return Math.max(0, Math.min(1, (pct ?? 0) / 100))
+  function getStrength (percent) {
+    return Math.max(0, Math.min(1, (percent ?? 0) / 100))
   }
 
   function apply () {
-    const s = strengthFromPct(intensity.value)
-    emit('apply-grayscale', { strength: s })
+    const strength = getStrength(intensity.value)
+    emit('apply-grayscale', { strength })
   }
 
-  watch(intensity, (v) => {
-    if (props.isOpen) {
-      emit('preview', { strength: strengthFromPct(v) })
-    }
-  })
-
-  function syncIntensityFromProps () {
+  function setIntensity() {
     if (!props.isOpen) return
 
     if (props.appliedStrength == null) {
       intensity.value = 0
     } else {
-      const clamped = Math.max(0, Math.min(1, props.appliedStrength))
-      intensity.value = Math.round(clamped * 100)
+      const validStrength = Math.max(0, Math.min(1, props.appliedStrength))
+      intensity.value = Math.round(validStrength * 100)
     }
   }
-
-  watch(() => props.isOpen, (newVal, oldVal) => {
-    if (!oldVal && newVal) {
-      syncIntensityFromProps()
-    }
-
-    if (oldVal && !newVal) {
-      emit('end-preview')
-    }
-  })
-
-  watch(() => props.appliedStrength, () => {
-    syncIntensityFromProps()
-  })
-
-  onBeforeUnmount(() => emit('end-preview'))
 
   const onEnter = (el) => {
     el.style.height = '0px'
     el.style.opacity = '0'
-
     const target = el.scrollHeight
 
     requestAnimationFrame(() => {
@@ -123,6 +100,28 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  watch(intensity, (v) => {
+    if (props.isOpen) {
+      emit('preview', { strength: getStrength(v) })
+    }
+  })
+
+  watch(() => props.isOpen, (newVal, oldVal) => {
+    if (!oldVal && newVal) {
+      setIntensity()
+    }
+
+    if (oldVal && !newVal) {
+      emit('end-preview')
+    }
+  })
+
+  watch(() => props.appliedStrength, () => {
+    setIntensity()
+  })
+
+  onBeforeUnmount(() => emit('end-preview'))
 </script>
 
 <style scoped>

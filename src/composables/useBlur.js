@@ -1,12 +1,20 @@
 import { ref, watch, nextTick } from 'vue'
+import { getCanvasPosition, clearToolCanvas, prepareToolCanvas, saveCanvas } from './canvasToolUtils'
+
+const CURSOR_OUTER_LINE_WIDTH = 1.5
+const CURSOR_INNER_LINE_WIDTH = 1
+const BLUR_STEP_FRACTION = 0.5
+const MIN_BLUR_STEP_PX = 2
 
 export function useBlur({
   isPdf,
+  pdfCanvas,
   imgEl,
   editCanvas,
   toolCanvas,
   preview,
   originalFileName,
+  originalFileType,
   blurActive,
   blurRadius,
   blurIntensity,
@@ -16,128 +24,97 @@ export function useBlur({
   pushHistory
 }) {
   let blurPainting = false
-  let blurPendingFrame = false
-  let blurLastPt = null
+  let blurFrameActive = false
+  let blurPointerPosition = null
+  let blurLastAppliedPosition = null
   let blurCanvasReady = false
-  const blurSuppressNextImgLoadResync = ref(false)
+  const blurSkipImgLoad = ref(false)
 
-  function prepareBlurCanvases(force = false) {
-    if (!blurActive.value) return
-    if (isPdf.value) return
+  function prepareBlurCanvas(force = false) {
+    const prepared = prepareToolCanvas({
+      active: blurActive, isPdf, pdfCanvas, imgEl, editCanvas, toolCanvas,
+      canvasReady: blurCanvasReady, force
+    })
 
-    const img = imgEl.value
-    const ec = editCanvas.value
-    const tc = toolCanvas.value
-    if (!img || !ec || !tc || !img.naturalWidth || !img.naturalHeight) return
+    if (prepared) {
+      clearToolCanvas(toolCanvas.value)
+      blurCanvasReady = true
+    }
+  }
 
-    if (!force && blurCanvasReady && ec.width === img.naturalWidth && ec.height === img.naturalHeight) {
+  function blurCursor(position) {
+    const toolCanvasEl = toolCanvas.value
+    if (!toolCanvasEl || !position) {
       return
     }
 
-    if (ec.width !== img.naturalWidth || ec.height !== img.naturalHeight) {
-      ec.width = img.naturalWidth
-      ec.height = img.naturalHeight
+    const context = toolCanvasEl.getContext('2d')
+    const radius = Math.max(1, Number(blurRadius.value) || 1)
+
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.clearRect(0, 0, toolCanvasEl.width, toolCanvasEl.height)
+    context.beginPath()
+    context.arc(position.x, position.y, radius, 0, Math.PI * 2)
+    context.lineWidth = CURSOR_OUTER_LINE_WIDTH
+    context.strokeStyle = 'rgba(0,0,0,0.85)'
+    context.stroke()
+    context.beginPath()
+    context.arc(position.x, position.y, radius, 0, Math.PI * 2)
+    context.lineWidth = CURSOR_INNER_LINE_WIDTH
+    context.strokeStyle = 'rgba(255,255,255,0.9)'
+    context.stroke()
+  }
+
+  function applyBlur(position) {
+    const editCanvasEl = editCanvas.value
+    if (!editCanvasEl || !position) {
+      return
     }
-    if (tc.width !== img.naturalWidth || tc.height !== img.naturalHeight) {
-      tc.width = img.naturalWidth
-      tc.height = img.naturalHeight
-    }
 
-    const ctx = ec.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.filter = 'none'
-    ctx.clearRect(0, 0, ec.width, ec.height)
-    ctx.drawImage(img, 0, 0)
-
-    clearBlurCursor()
-    blurCanvasReady = true
-  }
-
-  function canvasPtFromEvent(e) {
-    const tc = toolCanvas.value
-    if (!tc) return null
-    const rect = tc.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (tc.width / rect.width)
-    const y = (e.clientY - rect.top) * (tc.height / rect.height)
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-    return {
-      x: Math.max(0, Math.min(tc.width, x)),
-      y: Math.max(0, Math.min(tc.height, y))
-    }
-  }
-
-  function clearBlurCursor() {
-    const tc = toolCanvas.value
-    if (!tc) return
-    const ctx = tc.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, tc.width, tc.height)
-  }
-
-  function drawBlurCursor(pt) {
-    const tc = toolCanvas.value
-    if (!tc || !pt) return
-    const ctx = tc.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, tc.width, tc.height)
-
-    const r = Math.max(1, Number(blurRadius.value) || 1)
-    ctx.beginPath()
-    ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2)
-    ctx.lineWidth = 1.5
-    ctx.strokeStyle = 'rgba(0,0,0,0.85)'
-    ctx.stroke()
-    ctx.beginPath()
-    ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2)
-    ctx.lineWidth = 1
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)'
-    ctx.stroke()
-  }
-
-  function applyBlurAt(pt) {
-    const ec = editCanvas.value
-    if (!ec || !pt) return
-    const ctx = ec.getContext('2d')
-
-    const r = Math.max(1, Number(blurRadius.value) || 1)
+    const context = editCanvasEl.getContext('2d')
+    const radius = Math.max(1, Number(blurRadius.value) || 1)
     const blurPx = Math.max(0, Number(blurIntensity.value) || 0)
 
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2)
-    ctx.clip()
-    ctx.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none'
-    ctx.drawImage(ec, 0, 0)
-    ctx.restore()
+    context.save()
+    context.beginPath()
+    context.arc(position.x, position.y, radius, 0, Math.PI * 2)
+    context.clip()
+    context.filter = blurPx > 0 ? `blur(${blurPx}px)` : 'none'
+    context.drawImage(editCanvasEl, 0, 0)
+    context.restore()
   }
 
-  function commitBlurToPreview() {
-    if (isPdf.value) return
-    const ec = editCanvas.value
-    if (!ec || !ec.width || !ec.height) return
+  function applyBlurAt(position) {
+    if (!blurLastAppliedPosition) {
+      applyBlur(position)
+    } else {
+      const dx = position.x - blurLastAppliedPosition.x
+      const dy = position.y - blurLastAppliedPosition.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      const radius = Math.max(1, Number(blurRadius.value) || 1)
+      const step = Math.max(MIN_BLUR_STEP_PX, radius * BLUR_STEP_FRACTION)
 
-    const base = (originalFileName.value || 'image').replace(/\.[^.]+$/, '')
-    const newName = `${base}-blur.png`
-    const dataUrl = ec.toDataURL('image/png')
+      if (distance <= step) {
+        applyBlur(position)
+      } else {
+        const steps = Math.ceil(distance / step)
 
-    const b64 = dataUrl.split(',')[1] || ''
-    const size = atob(b64).length
+        for (let i = 1; i <= steps; i++) {
+          const moveRatio = i / steps
+          applyBlur({ x: blurLastAppliedPosition.x + dx * moveRatio, y: blurLastAppliedPosition.y + dy * moveRatio })
+        }
+      }
+    }
+    blurLastAppliedPosition = position
+  }
 
-    blurSuppressNextImgLoadResync.value = true
-
-    preview.value = dataUrl
-    emit('update:preview', preview.value)
-
-    const alphaNow = canvasHasAlpha(ec)
-    setHasAlpha(alphaNow)
-
-    emit('update:meta', {
-      name: newName,
-      type: 'image/png',
-      size,
-      width: ec.width,
-      height: ec.height,
-      lastModified: Date.now()
+  function saveBlur() {
+    saveCanvas({
+      editCanvasEl: editCanvas.value,
+      originalFileName, isPdf, originalFileType,
+      skipChange: blurSkipImgLoad,
+      suffix: 'blur',
+      preview, emit, canvasHasAlpha, setHasAlpha
     })
 
     emit('blur-stroke', {
@@ -147,103 +124,125 @@ export function useBlur({
   }
 
   function onBlurPointerDown(e) {
-    if (!blurActive.value) return
-    if (isPdf.value) return
-    if (!preview.value) return
+    if (!blurActive.value || !preview.value) {
+      return
+    }
 
-    if (!blurCanvasReady) prepareBlurCanvases(true)
+    if (!blurCanvasReady) {
+      prepareBlurCanvas(true)
+    }
 
-    const pt = canvasPtFromEvent(e)
-    if (!pt) return
+    const position = getCanvasPosition(e, toolCanvas.value)
+    if (!position) {
+      return
+    }
 
     blurPainting = true
-    blurLastPt = pt
+    blurPointerPosition = position
+    blurLastAppliedPosition = null
 
-    try { toolCanvas.value?.setPointerCapture?.(e.pointerId) } catch (_) {}
+    try { 
+      toolCanvas.value?.setPointerCapture?.(e.pointerId) 
+    } catch (_) {}
 
     emit('editing')
-
     pushHistory()
-    applyBlurAt(pt)
-    drawBlurCursor(pt)
+    applyBlurAt(position)
+    blurCursor(position)
   }
 
   function onBlurPointerMove(e) {
-    if (!blurActive.value) return
-    if (isPdf.value) return
-    const pt = canvasPtFromEvent(e)
-    if (!pt) return
+    if (!blurActive.value) {
+      return
+    }
 
-    blurLastPt = pt
+    const position = getCanvasPosition(e, toolCanvas.value)
+    if (!position) {
+      return
+    }
 
-    if (blurPendingFrame) return
-    blurPendingFrame = true
+    blurPointerPosition = position
+    if (blurFrameActive) {
+      return
+    }
+
+    blurFrameActive = true
 
     requestAnimationFrame(() => {
-      blurPendingFrame = false
-      if (!blurLastPt) return
-      drawBlurCursor(blurLastPt)
+      blurFrameActive = false
+      if (!blurPointerPosition) return
+      blurCursor(blurPointerPosition)
 
       if (blurPainting) {
-        applyBlurAt(blurLastPt)
+        applyBlurAt(blurPointerPosition)
       }
     })
   }
 
   function onBlurPointerUp(e) {
     if (!blurActive.value) return
-    if (isPdf.value) return
 
     if (blurPainting) {
       blurPainting = false
-      commitBlurToPreview()
+      blurLastAppliedPosition = null
+      saveBlur()
     }
 
-    try { toolCanvas.value?.releasePointerCapture?.(e.pointerId) } catch (_) {}
+    try { 
+      toolCanvas.value?.releasePointerCapture?.(e.pointerId)
+    } catch (_) {}
   }
 
   function onBlurPointerLeave() {
-    if (!blurActive.value) return
+    if (!blurActive.value) {
+      return
+    }
+
     if (blurPainting) {
       blurPainting = false
-      commitBlurToPreview()
+      blurLastAppliedPosition = null
+      saveBlur()
     }
-    clearBlurCursor()
+
+    clearToolCanvas(toolCanvas.value)
   }
 
   function setupBlurWatchers() {
     watch(blurActive, (on) => {
       if (on) {
         blurCanvasReady = false
-        blurSuppressNextImgLoadResync.value = false
-        nextTick(() => prepareBlurCanvases(true))
+        blurSkipImgLoad.value = false
+        nextTick(() => prepareBlurCanvas(true))
       } else {
         if (blurPainting) {
           blurPainting = false
-          commitBlurToPreview()
+          saveBlur()
         }
-        clearBlurCursor()
+
+        clearToolCanvas(toolCanvas.value)
         blurCanvasReady = false
       }
     })
 
     watch(blurRadius, () => {
-      if (blurActive.value && blurLastPt) drawBlurCursor(blurLastPt)
+      if (blurActive.value && blurPointerPosition) {
+        blurCursor(blurPointerPosition)
+      }
     })
   }
 
   function handleImageLoadedBlur() {
-    if (blurSuppressNextImgLoadResync.value) {
-      blurSuppressNextImgLoadResync.value = false
+    if (blurSkipImgLoad.value) {
+      blurSkipImgLoad.value = false
     } else {
       blurCanvasReady = false
-      prepareBlurCanvases(true)
+      prepareBlurCanvas(true)
     }
   }
 
   return {
-    blurSuppressNextImgLoadResync,
-    prepareBlurCanvases,
+    blurSkipImgLoad,
+    prepareBlurCanvas,
     onBlurPointerDown,
     onBlurPointerMove,
     onBlurPointerUp,

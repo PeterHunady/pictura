@@ -26,7 +26,7 @@
                 type="text"
                 class="ty-body-small"
                 :value="color"
-                @input="onColorInput"
+                @input="colorInput"
                 :placeholder="bgTransparent ? 'transparent' : '#ffffff'"
               />
 
@@ -87,32 +87,27 @@
   ])
 
   const color = ref(props.initialColor)
-  const lastValidColor = ref(null)
+  const lastColor = ref(null)
   const picker = ref(null)
+  const normalizedColor = computed(() => formatHexColor(color.value))
+  let previewTimer = null
 
-  function normalizeHex (val) {
-    const s = String(val || '').trim()
-    const m6 = s.match(/^#?([0-9a-fA-F]{6})$/)
-    if (m6) return `#${m6[1].toLowerCase()}`
+  function formatHexColor (val) {
+    const fileInfo = String(val || '').trim()
+    const fullHex = fileInfo.match(/^#?([0-9a-fA-F]{6})$/)
+    if (fullHex) {
+      return `#${fullHex[1].toLowerCase()}`
+    }
 
-    const m3 = s.match(/^#?([0-9a-fA-F]{3})$/)
+    const shortHex = fileInfo.match(/^#?([0-9a-fA-F]{3})$/)
 
-    if (m3) {
-      return (
-        '#' +
-        m3[1]
-          .split('')
-          .map(c => c + c)
-          .join('')
-          .toLowerCase()
-      )
+    if (shortHex) {
+      return ('#' + shortHex[1] .split('').map(c => c + c).join('').toLowerCase())
     }
     return null
   }
 
-  const normalizedColor = computed(() => normalizeHex(color.value))
-
-  function onColorInput(e) {
+  function colorInput(e) {
     color.value = e.target.value
   }
 
@@ -123,86 +118,15 @@
   }
 
   function applyColor() {
-    if (!lastValidColor.value) return
-    emit('apply-color', lastValidColor.value)
+    if (!lastColor.value) {
+      return
+    }
+    emit('apply-color', lastColor.value)
   }
 
   function removeBackground() {
     emit('remove-background')
   }
-
-  let previewTimer = null
-  watch(color, (v) => {
-    if (!props.isOpen) return
-
-    const hx = normalizeHex(v)
-    if (!hx) return
-
-    lastValidColor.value = hx
-
-    clearTimeout(previewTimer)
-    previewTimer = setTimeout(() => emit('preview-color', hx), 80)
-  })
-
-  watch(
-    () => props.isOpen,
-    (newVal, oldVal) => {
-      if (!oldVal && newVal) {
-        if (props.bgTransparent) {
-          color.value = ''
-          lastValidColor.value = null
-        } else if (props.appliedColor) {
-          color.value = props.appliedColor
-          lastValidColor.value = normalizeHex(color.value)
-        } else {
-          color.value = props.initialColor || '#ffffff'
-          lastValidColor.value = normalizeHex(color.value)
-        }
-      }
-
-      if (oldVal && !newVal) {
-        emit('end-preview-color')
-      }
-    }
-  )
-
-  watch(
-    () => props.bgTransparent,
-    (v) => {
-      if (v) {
-        color.value = ''
-        lastValidColor.value = null
-      }
-    }
-  )
-
-  watch(
-    () => props.appliedColor,
-    (v) => {
-      if (!props.bgTransparent && v) {
-        color.value = v
-        lastValidColor.value = normalizeHex(v)
-      }
-    }
-  )
-
-  watch(
-    () => props.initialColor,
-    (v) => {
-      if (!props.bgTransparent && !props.appliedColor) {
-        color.value = v || '#ffffff'
-        lastValidColor.value = normalizeHex(color.value)
-      }
-    }
-  )
-
-  onBeforeUnmount(() => {
-    if (previewTimer) {
-      clearTimeout(previewTimer)
-    }
-    
-    emit('end-preview-color')
-  })
 
   const onEnter = (el) => {
     el.style.height = '0px'
@@ -231,6 +155,73 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  watch(color, (v) => {
+    if (!props.isOpen) {
+      return
+    }
+
+    const hx = formatHexColor(v)
+    if (!hx) {
+      return
+    }
+
+    lastColor.value = hx
+    clearTimeout(previewTimer)
+    previewTimer = setTimeout(() => emit('preview-color', hx), 80)
+  })
+
+  watch(() => props.isOpen, (newVal, oldVal) => {
+      if (!oldVal && newVal) {
+        if (props.bgTransparent) {
+          color.value = ''
+          lastColor.value = null
+        } else if (props.appliedColor) {
+          color.value = props.appliedColor
+          lastColor.value = formatHexColor(color.value)
+        } else {
+          color.value = props.initialColor || '#ffffff'
+          lastColor.value = formatHexColor(color.value)
+        }
+      }
+
+      if (oldVal && !newVal) {
+        emit('end-preview-color')
+      }
+    }
+  )
+
+  watch(() => props.bgTransparent, (v) => {
+      if (v) {
+        color.value = ''
+        lastColor.value = null
+      }
+    }
+  )
+
+  watch(() => props.appliedColor, (v) => {
+      if (!props.bgTransparent && v) {
+        color.value = v
+        lastColor.value = formatHexColor(v)
+      }
+    }
+  )
+
+  watch(() => props.initialColor, (v) => {
+      if (!props.bgTransparent && !props.appliedColor) {
+        color.value = v || '#ffffff'
+        lastColor.value = formatHexColor(color.value)
+      }
+    }
+  )
+
+  onBeforeUnmount(() => {
+    if (previewTimer) {
+      clearTimeout(previewTimer)
+    }
+    
+    emit('end-preview-color')
+  })
 </script>
 
 <style scoped>

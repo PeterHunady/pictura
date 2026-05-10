@@ -1,15 +1,19 @@
 import { ref, watch, nextTick } from 'vue'
+import { getCanvasPosition, clearToolCanvas, prepareToolCanvas, saveCanvas } from './canvasToolUtils'
 
 const HANDLE_SIZE = 8
 const HANDLE_HIT_SIZE = 12
+const MIN_SHAPE_SIZE = 2
 
 export function useMark({
   isPdf,
+  pdfCanvas,
   imgEl,
   editCanvas,
   toolCanvas,
   preview,
   originalFileName,
+  originalFileType,
   markActive,
   markThickness,
   markColor,
@@ -31,125 +35,83 @@ export function useMark({
   const markCursor = ref(null)
 
   function prepareMarkCanvases(force = false) {
-    if (!markActive.value) return
-    if (isPdf.value) return
-
-    const img = imgEl.value
-    const ec = editCanvas.value
-    const tc = toolCanvas.value
-    if (!img || !ec || !tc || !img.naturalWidth || !img.naturalHeight) return
-
-    if (!force && markCanvasReady && ec.width === img.naturalWidth && ec.height === img.naturalHeight) {
-      return
+    const prepared = prepareToolCanvas({
+      active: markActive, isPdf, pdfCanvas, imgEl, editCanvas, toolCanvas,
+      canvasReady: markCanvasReady, force
+    })
+    if (prepared) {
+      clearToolCanvas(toolCanvas.value)
+      markCanvasReady = true
     }
-
-    if (ec.width !== img.naturalWidth || ec.height !== img.naturalHeight) {
-      ec.width = img.naturalWidth
-      ec.height = img.naturalHeight
-    }
-    if (tc.width !== img.naturalWidth || tc.height !== img.naturalHeight) {
-      tc.width = img.naturalWidth
-      tc.height = img.naturalHeight
-    }
-
-    const ctx = ec.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.filter = 'none'
-    ctx.clearRect(0, 0, ec.width, ec.height)
-    ctx.drawImage(img, 0, 0)
-
-    clearMarkPreview()
-    markCanvasReady = true
-  }
-
-  function canvasPtFromEvent(e) {
-    const tc = toolCanvas.value
-    if (!tc) return null
-    const rect = tc.getBoundingClientRect()
-    const x = (e.clientX - rect.left) * (tc.width / rect.width)
-    const y = (e.clientY - rect.top) * (tc.height / rect.height)
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return null
-    return {
-      x: Math.max(0, Math.min(tc.width, x)),
-      y: Math.max(0, Math.min(tc.height, y))
-    }
-  }
-
-  function clearMarkPreview() {
-    const tc = toolCanvas.value
-    if (!tc) return
-    const ctx = tc.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, tc.width, tc.height)
   }
 
   function drawMarkPreview(startPt, endPt) {
-    const tc = toolCanvas.value
-    if (!tc) return
-    const ctx = tc.getContext('2d')
-    ctx.setTransform(1, 0, 0, 1, 0, 0)
-    ctx.clearRect(0, 0, tc.width, tc.height)
+    const toolCanvasEl = toolCanvas.value
+    if (!toolCanvasEl) return
+    const context = toolCanvasEl.getContext('2d')
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    context.clearRect(0, 0, toolCanvasEl.width, toolCanvasEl.height)
 
     if (activeShape.value) {
       const shape = activeShape.value
-      drawShapeOnContext(ctx, shape)
-      drawResizeHandles(ctx, shape)
+      drawShapeOnContext(context, shape)
+      drawResizeHandles(context, shape)
     }
 
     if (startPt && endPt) {
-      ctx.strokeStyle = markColor.value
-      ctx.lineWidth = markThickness.value
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
+      context.strokeStyle = markColor.value
+      context.lineWidth = markThickness.value
+      context.lineCap = 'round'
+      context.lineJoin = 'round'
 
       const x = Math.min(startPt.x, endPt.x)
       const y = Math.min(startPt.y, endPt.y)
-      const w = Math.abs(endPt.x - startPt.x)
-      const h = Math.abs(endPt.y - startPt.y)
+      const shapeWidth = Math.abs(endPt.x - startPt.x)
+      const shapeHeight = Math.abs(endPt.y - startPt.y)
 
-      ctx.beginPath()
+      context.beginPath()
       if (markShape.value === 'circle') {
-        const cx = x + w / 2
-        const cy = y + h / 2
-        const rx = w / 2
-        const ry = h / 2
-        ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+        const centerX = x + shapeWidth / 2
+        const centerY = y + shapeHeight / 2
+        const rx = shapeWidth / 2
+        const ry = shapeHeight / 2
+        context.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2)
       } else {
-        ctx.rect(x, y, w, h)
+        context.rect(x, y, shapeWidth, shapeHeight)
       }
-      ctx.stroke()
+      context.stroke()
     }
   }
 
-  function drawShapeOnContext(ctx, shape) {
-    ctx.strokeStyle = shape.color
-    ctx.lineWidth = shape.thickness
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
+  function drawShapeOnContext(context, shape) {
+    context.strokeStyle = shape.color
+    context.lineWidth = shape.thickness
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
 
-    ctx.beginPath()
+    context.beginPath()
     if (shape.type === 'circle') {
-      const cx = shape.x + shape.width / 2
-      const cy = shape.y + shape.height / 2
+      const centerX = shape.x + shape.width / 2
+      const centerY = shape.y + shape.height / 2
       const rx = shape.width / 2
       const ry = shape.height / 2
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+      context.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2)
     } else {
-      ctx.rect(shape.x, shape.y, shape.width, shape.height)
+      context.rect(shape.x, shape.y, shape.width, shape.height)
     }
-    ctx.stroke()
+    context.stroke()
   }
 
-  function drawResizeHandles(ctx, shape) {
+  function drawResizeHandles(context, shape) {
     const handles = getHandlePositions(shape)
 
-    ctx.fillStyle = '#ffffff'
-    ctx.strokeStyle = '#000000'
-    ctx.lineWidth = 1
+    context.fillStyle = '#ffffff'
+    context.strokeStyle = '#000000'
+    context.lineWidth = 1
 
     for (const pos of Object.values(handles)) {
-      ctx.fillRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
-      ctx.strokeRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
+      context.fillRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
+      context.strokeRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
     }
   }
 
@@ -162,11 +124,11 @@ export function useMark({
     }
   }
 
-  function hitTestHandle(pt, shape) {
+  function hitTestHandle(position, shape) {
     const handles = getHandlePositions(shape)
     for (const [name, pos] of Object.entries(handles)) {
-      const dx = pt.x - pos.x
-      const dy = pt.y - pos.y
+      const dx = position.x - pos.x
+      const dy = position.y - pos.y
       if (Math.abs(dx) <= HANDLE_HIT_SIZE / 2 && Math.abs(dy) <= HANDLE_HIT_SIZE / 2) {
         return name
       }
@@ -174,51 +136,30 @@ export function useMark({
     return null
   }
 
-  function hitTestShape(pt, shape) {
-    return pt.x >= shape.x && pt.x <= shape.x + shape.width &&
-           pt.y >= shape.y && pt.y <= shape.y + shape.height
+  function hitTestShape(position, shape) {
+    return position.x >= shape.x && position.x <= shape.x + shape.width &&
+           position.y >= shape.y && position.y <= shape.y + shape.height
   }
 
   function commitMarkToPreview() {
-    if (isPdf.value) return
-    const ec = editCanvas.value
-    if (!ec || !ec.width || !ec.height) return
-
-    const base = (originalFileName.value || 'image').replace(/\.[^.]+$/, '')
-    const newName = `${base}-marked.png`
-    const dataUrl = ec.toDataURL('image/png')
-
-    const b64 = dataUrl.split(',')[1] || ''
-    const size = atob(b64).length
-
-    markSuppressNextImgLoadResync.value = true
-
-    preview.value = dataUrl
-    emit('update:preview', preview.value)
-
-    const alphaNow = canvasHasAlpha(ec)
-    setHasAlpha(alphaNow)
-
-    emit('update:meta', {
-      name: newName,
-      type: 'image/png',
-      size,
-      width: ec.width,
-      height: ec.height,
-      lastModified: Date.now()
+    saveCanvas({
+      editCanvasEl: editCanvas.value,
+      originalFileName, isPdf, originalFileType,
+      skipChange: markSuppressNextImgLoadResync,
+      suffix: 'marked',
+      preview, emit, canvasHasAlpha, setHasAlpha
     })
   }
 
   function commitActiveShape() {
     if (!activeShape.value) return
-    if (isPdf.value) return
 
-    const ec = editCanvas.value
-    if (!ec) return
+    const editCanvasEl = editCanvas.value
+    if (!editCanvasEl) return
 
     const shape = activeShape.value
-    const ctx = ec.getContext('2d')
-    drawShapeOnContext(ctx, shape)
+    const context = editCanvasEl.getContext('2d')
+    drawShapeOnContext(context, shape)
 
     emit('mark-shape', {
       thickness: shape.thickness,
@@ -234,29 +175,28 @@ export function useMark({
     shapeDragStart = null
 
     commitMarkToPreview()
-    clearMarkPreview()
+    clearToolCanvas(toolCanvas.value)
   }
 
   function onMarkPointerDown(e) {
     if (!markActive.value) return
-    if (isPdf.value) return
     if (!preview.value) return
 
     if (!markCanvasReady) prepareMarkCanvases(true)
 
-    const pt = canvasPtFromEvent(e)
-    if (!pt) return
+    const position = getCanvasPosition(e, toolCanvas.value)
+    if (!position) return
 
     try { toolCanvas.value?.setPointerCapture?.(e.pointerId) } catch (_) {}
 
     if (activeShape.value) {
-      const handle = hitTestHandle(pt, activeShape.value)
+      const handle = hitTestHandle(position, activeShape.value)
       if (handle) {
         shapeMode.value = 'resizing'
         activeHandle.value = handle
         shapeDragStart = {
-          x: pt.x,
-          y: pt.y,
+          x: position.x,
+          y: position.y,
           shapeX: activeShape.value.x,
           shapeY: activeShape.value.y,
           shapeW: activeShape.value.width,
@@ -265,11 +205,11 @@ export function useMark({
         return
       }
 
-      if (hitTestShape(pt, activeShape.value)) {
+      if (hitTestShape(position, activeShape.value)) {
         shapeMode.value = 'moving'
         shapeDragStart = {
-          x: pt.x,
-          y: pt.y,
+          x: position.x,
+          y: position.y,
           shapeX: activeShape.value.x,
           shapeY: activeShape.value.y,
           shapeW: activeShape.value.width,
@@ -283,7 +223,7 @@ export function useMark({
 
     shapeMode.value = 'drawing'
     markPainting = true
-    markStartPt = pt
+    markStartPt = position
 
     emit('editing')
     pushHistory()
@@ -291,14 +231,13 @@ export function useMark({
 
   function onMarkPointerMove(e) {
     if (!markActive.value) return
-    if (isPdf.value) return
 
-    const pt = canvasPtFromEvent(e)
-    if (!pt) return
+    const position = getCanvasPosition(e, toolCanvas.value)
+    if (!position) return
 
     if (shapeMode.value === 'resizing' && activeShape.value && shapeDragStart) {
-      const dx = pt.x - shapeDragStart.x
-      const dy = pt.y - shapeDragStart.y
+      const dx = position.x - shapeDragStart.x
+      const dy = position.y - shapeDragStart.y
       const handle = activeHandle.value
 
       let newX = shapeDragStart.shapeX
@@ -346,8 +285,8 @@ export function useMark({
     }
 
     if (shapeMode.value === 'moving' && activeShape.value && shapeDragStart) {
-      const dx = pt.x - shapeDragStart.x
-      const dy = pt.y - shapeDragStart.y
+      const dx = position.x - shapeDragStart.x
+      const dy = position.y - shapeDragStart.y
 
       activeShape.value = {
         ...activeShape.value,
@@ -360,17 +299,17 @@ export function useMark({
     }
 
     if (shapeMode.value === 'drawing' && markPainting && markStartPt) {
-      drawMarkPreview(markStartPt, pt)
+      drawMarkPreview(markStartPt, position)
       return
     }
 
     if (activeShape.value && !shapeMode.value) {
-      const handle = hitTestHandle(pt, activeShape.value)
+      const handle = hitTestHandle(position, activeShape.value)
       if (handle) {
         markCursor.value = `cursor-${handle}-resize`
         return
       }
-      if (hitTestShape(pt, activeShape.value)) {
+      if (hitTestShape(position, activeShape.value)) {
         markCursor.value = 'cursor-move'
         return
       }
@@ -380,7 +319,6 @@ export function useMark({
 
   function onMarkPointerUp(e) {
     if (!markActive.value) return
-    if (isPdf.value) return
 
     try { toolCanvas.value?.releasePointerCapture?.(e.pointerId) } catch (_) {}
 
@@ -393,19 +331,19 @@ export function useMark({
     }
 
     if (shapeMode.value === 'drawing' && markPainting && markStartPt) {
-      const pt = canvasPtFromEvent(e)
-      if (pt) {
-        const x = Math.min(markStartPt.x, pt.x)
-        const y = Math.min(markStartPt.y, pt.y)
-        const w = Math.abs(pt.x - markStartPt.x)
-        const h = Math.abs(pt.y - markStartPt.y)
+      const position = getCanvasPosition(e, toolCanvas.value)
+      if (position) {
+        const x = Math.min(markStartPt.x, position.x)
+        const y = Math.min(markStartPt.y, position.y)
+        const shapeWidth = Math.abs(position.x - markStartPt.x)
+        const shapeHeight = Math.abs(position.y - markStartPt.y)
 
-        if (w > 2 && h > 2) {
+        if (shapeWidth > MIN_SHAPE_SIZE && shapeHeight > MIN_SHAPE_SIZE) {
           activeShape.value = {
             x,
             y,
-            width: w,
-            height: h,
+            width: shapeWidth,
+            height: shapeHeight,
             type: markShape.value,
             color: markColor.value,
             thickness: markThickness.value
@@ -457,7 +395,7 @@ export function useMark({
         activeHandle.value = null
         shapeDragStart = null
         markCursor.value = null
-        clearMarkPreview()
+        clearToolCanvas(toolCanvas.value)
         markCanvasReady = false
       }
     })

@@ -11,13 +11,13 @@
           v-for="p in pages"
           :key="p"
           class="thumb"
-          :class="{ selected: localSel === p }"
-          @click="localSel = p"
+          :class="{ selected: selectedPage === p }"
+          @click="selectedPage = p"
         >
 
           <div class="canvas-wrap">
-            <canvas v-if="!thumbs[p]" class="skel"></canvas>
-            <img v-else class="img" :src="thumbs[p]" :alt="`Page ${p}`" draggable="false" />
+            <canvas v-if="!pageThumbnails[p]" class="skel"></canvas>
+            <img v-else class="img" :src="pageThumbnails[p]" :alt="`Page ${p}`" draggable="false" />
           </div>
 
           <span class="badge ty-body-small">#{{ p }}</span>
@@ -26,7 +26,7 @@
 
       <div class="actions">
         <button class="ghost ty-body-small" @click="$emit('cancel')">Cancel</button>
-        <button class="primary ty-body-small" :disabled="!localSel" @click="confirm">Select</button>
+        <button class="primary ty-body-small" :disabled="!selectedPage" @click="confirm">Select</button>
       </div>
     </div>
   </div>
@@ -36,9 +36,7 @@
     import { ref, watch, onMounted } from 'vue'
     import * as pdfjsLib from 'pdfjs-dist'
     import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url'
-
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
-    const { getDocument } = pdfjsLib
 
     const props = defineProps({
         src: { type: String, required: true },
@@ -48,14 +46,12 @@
     })
 
     const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
-    const localSel = ref(props.modelValue || 1)
-    watch(() => props.modelValue, v => { localSel.value = v || 1 })
-    watch(localSel, v => emit('update:modelValue', v))
+    const { getDocument } = pdfjsLib
+    const selectedPage = ref(props.modelValue || 1)
+    const pageThumbnails = ref({})
 
-    const thumbs = ref({})
-
-    async function renderThumbs () {
-        thumbs.value = {}
+    async function renderPageThumbnails () {
+        pageThumbnails.value = {}
         
         try {
             const pdf = await getDocument({ url: props.src }).promise
@@ -63,32 +59,33 @@
 
             for (let p = 1; p <= count; p++) {
                 const page = await pdf.getPage(p)
-                const vp1 = page.getViewport({ scale: 1 })
-                const scale = props.thumbWidth / vp1.width
-                const vp = page.getViewport({ scale })
-                const c = document.createElement('canvas')
+                const defaultViewport = page.getViewport({ scale: 1 })
+                const scale = props.thumbWidth / defaultViewport.width
+                const exportViewport = page.getViewport({ scale })
+                const canvas = document.createElement('canvas')
 
-                c.width = Math.max(1, Math.round(vp.width))
-                c.height = Math.max(1, Math.round(vp.height))
-
-                await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise
-                thumbs.value = { ...thumbs.value, [p]: c.toDataURL('image/png') }
+                canvas.width = Math.max(1, Math.round(exportViewport.width))
+                canvas.height = Math.max(1, Math.round(exportViewport.height))
+                await page.render({ canvasContext: canvas.getContext('2d'), viewport: exportViewport }).promise
+                pageThumbnails.value = { ...pageThumbnails.value, [p]: canvas.toDataURL('image/png') }
             }
         }catch (e) {
             console.error('Thumb render failed:', e)
         }
     }
 
-    onMounted(renderThumbs)
-    watch(() => props.src, renderThumbs)
-    watch(() => props.pages, renderThumbs)
-
     function confirm () {
-        if (!localSel.value) {
+        if (!selectedPage.value) {
             return
         }
-        emit('confirm', localSel.value)
+        emit('confirm', selectedPage.value)
     }
+
+    watch(() => props.modelValue, v => { selectedPage.value = v || 1 })
+    watch(selectedPage, v => emit('update:modelValue', v))
+    onMounted(renderPageThumbnails)
+    watch(() => props.src, renderPageThumbnails)
+    watch(() => props.pages, renderPageThumbnails)
 </script>
 
 <style scoped>

@@ -1,29 +1,28 @@
 import { ref, computed } from 'vue'
 
-export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCanvas, pdfRenderScale }) {
+export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panzoom, pdfCanvas, pdfRenderScale }) {
   const overlayX = ref(0)
   const overlayY = ref(0)
   const overlayW = ref(0)
   const overlayH = ref(0)
   const overlayVisible = ref(true)
+  const resizeHandles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
-  const dirs = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
   let resizing = false
-  let resizeDir = null
-  const resizeStart = {}
-
+  let activeResizeHandle = null
   let dragging = false
+  const resizeStart = {}
   const dragStart = {}
 
   const overlayStyle = computed(() => {
-    const s = initialScale.value || 1
+    const scale = initialScale.value || 1
 
     return {
       position: 'absolute',
-      left: `${overlayX.value * s}px`,
-      top: `${overlayY.value * s}px`,
-      width: `${overlayW.value * s}px`,
-      height: `${overlayH.value * s}px`,
+      left: `${overlayX.value * scale}px`,
+      top: `${overlayY.value * scale}px`,
+      width: `${overlayW.value * scale}px`,
+      height: `${overlayH.value * scale}px`,
       border: '2px dashed #ff3b30',
       boxSizing: 'border-box',
       pointerEvents: 'none',
@@ -40,18 +39,18 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
   }
 
   function showOverlay(w, h, x = overlayX.value, y = overlayY.value) {
-    const MW = maxW.value || 0
-    const MH = maxH.value || 0
+    const maxWidth = maxW.value || 0
+    const maxHeight = maxH.value || 0
 
-    const cw = Math.max(1, Math.min(w ?? MW, MW || w || 1))
-    const ch = Math.max(1, Math.min(h ?? MH, MH || h || 1))
-    const cx = MW ? Math.max(0, Math.min(x, MW - cw)) : (x ?? 0)
-    const cy = MH ? Math.max(0, Math.min(y, MH - ch)) : (y ?? 0)
+    const overlayWidth = Math.max(1, Math.min(w ?? maxWidth, maxWidth || w || 1))
+    const overlayHeight = Math.max(1, Math.min(h ?? maxHeight, maxHeight || h || 1))
+    const clampedX = maxWidth ? Math.max(0, Math.min(x, maxWidth - overlayWidth)) : (x ?? 0)
+    const clampedY = maxHeight ? Math.max(0, Math.min(y, maxHeight - overlayHeight)) : (y ?? 0)
 
-    overlayW.value = Math.round(cw)
-    overlayH.value = Math.round(ch)
-    overlayX.value = Math.round(cx)
-    overlayY.value = Math.round(cy)
+    overlayW.value = Math.round(overlayWidth)
+    overlayH.value = Math.round(overlayHeight)
+    overlayX.value = Math.round(clampedX)
+    overlayY.value = Math.round(clampedY)
 
     emit('update:overlay', {
       width: overlayW.value,
@@ -67,34 +66,33 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     emit('update:overlay', { width: 0, height: 0, x: 0, y: 0 })
   }
 
-  function toggleOverlayVisibility(visible) {
+  function setOverlayVisible(visible) {
     overlayVisible.value = visible
   }
 
-  function overlayBoxPdfCoords() {
-    const Hpx = pdfCanvas.value.height
-    const s = pdfRenderScale.value || 1
+  function getPdfOverlayBox() {
+    const canvasHeight = pdfCanvas.value.height
+    const scale = pdfRenderScale.value || 1
 
     return {
-      x: overlayX.value / s,
-      y: (Hpx - overlayY.value - overlayH.value) / s,
-      width: overlayW.value / s,
-      height: overlayH.value / s,
+      x: overlayX.value / scale,
+      y: (canvasHeight - overlayY.value - overlayH.value) / scale,
+      width: overlayW.value / scale,
+      height: overlayH.value / scale
     }
   }
 
-  function startResize(dir) {
+  function startResize(handle) {
     resizing = true
-    resizeDir = dir
-    resizeStart.rect = panCont.value.getBoundingClientRect()
+    activeResizeHandle = handle
+    resizeStart.rect = canvasWrapper.value.getBoundingClientRect()
 
-    if (pz && pz()) {
-      pz().pause()
+    if (panzoom && panzoom()) {
+      panzoom().pause()
     }
 
-    const currentZoom = pz && pz() ? pz().getTransform().scale : 1
+    const currentZoom = panzoom && panzoom() ? panzoom().getTransform().scale : 1
     resizeStart.scale = initialScale.value * currentZoom
-
     resizeStart.origX = overlayX.value
     resizeStart.origY = overlayY.value
     resizeStart.origW = overlayW.value
@@ -109,54 +107,53 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
       return
     }
 
-    const rect = panCont.value.getBoundingClientRect()
+    const rect = canvasWrapper.value.getBoundingClientRect()
     const scale = resizeStart.scale
+    const mouseX = (e.clientX - rect.left) / scale
+    const mouseY = (e.clientY - rect.top) / scale
 
-    const natX = (e.clientX - rect.left) / scale
-    const natY = (e.clientY - rect.top) / scale
-
-    const MAXW = maxW.value || 1
-    const MAXH = maxH.value || 1
+    const maxWidth = maxW.value || 1
+    const maxHeight = maxH.value || 1
     const MINW = 10, MINH = 10
 
-    let NX = resizeStart.origX
-    let NY = resizeStart.origY
-    let NW = resizeStart.origW
-    let NH = resizeStart.origH
+    let newX = resizeStart.origX
+    let newY = resizeStart.origY
+    let newW = resizeStart.origW
+    let newH = resizeStart.origH
 
-    if (resizeDir.includes('e')) {
-      NW = Math.max(MINW, Math.min(natX - resizeStart.origX, MAXW - resizeStart.origX))
+    if (activeResizeHandle.includes('e')) {
+      newW = Math.max(MINW, Math.min(mouseX - resizeStart.origX, maxWidth - resizeStart.origX))
     }
 
-    if (resizeDir.includes('s')) {
-      NH = Math.max(MINH, Math.min(natY - resizeStart.origY, MAXH - resizeStart.origY))
+    if (activeResizeHandle.includes('s')) {
+      newH = Math.max(MINH, Math.min(mouseY - resizeStart.origY, maxHeight - resizeStart.origY))
     }
 
-    if (resizeDir.includes('w')) {
-      NX = Math.max(0, Math.min(natX, resizeStart.origX + resizeStart.origW - MINW))
-      NW = (resizeStart.origX + resizeStart.origW) - NX
+    if (activeResizeHandle.includes('w')) {
+      newX = Math.max(0, Math.min(mouseX, resizeStart.origX + resizeStart.origW - MINW))
+      newW = (resizeStart.origX + resizeStart.origW) - newX
     }
 
-    if (resizeDir.includes('n')) {
-      NY = Math.max(0, Math.min(natY, resizeStart.origY + resizeStart.origH - MINH))
-      NH = (resizeStart.origY + resizeStart.origH) - NY
+    if (activeResizeHandle.includes('n')) {
+      newY = Math.max(0, Math.min(mouseY, resizeStart.origY + resizeStart.origH - MINH))
+      newH = (resizeStart.origY + resizeStart.origH) - newY
     }
 
-    NX = Math.max(0, Math.min(NX, MAXW - MINW))
-    NY = Math.max(0, Math.min(NY, MAXH - MINH))
-    NW = Math.max(MINW, Math.min(NW, MAXW - NX))
-    NH = Math.max(MINH, Math.min(NH, MAXH - NY))
+    newX = Math.max(0, Math.min(newX, maxWidth - MINW))
+    newY = Math.max(0, Math.min(newY, maxHeight - MINH))
+    newW = Math.max(MINW, Math.min(newW, maxWidth - newX))
+    newH = Math.max(MINH, Math.min(newH, maxHeight - newY))
 
-    overlayX.value = Math.round(NX)
-    overlayY.value = Math.round(NY)
-    overlayW.value = Math.round(NW)
-    overlayH.value = Math.round(NH)
+    overlayX.value = Math.round(newX)
+    overlayY.value = Math.round(newY)
+    overlayW.value = Math.round(newW)
+    overlayH.value = Math.round(newH)
 
-    if (overlayX.value + overlayW.value > MAXW) {
-      overlayW.value = MAXW - overlayX.value
+    if (overlayX.value + overlayW.value > maxWidth) {
+      overlayW.value = maxWidth - overlayX.value
     }
-    if (overlayY.value + overlayH.value > MAXH) {
-      overlayH.value = MAXH - overlayY.value
+    if (overlayY.value + overlayH.value > maxHeight) {
+      overlayH.value = maxHeight - overlayY.value
     }
 
     emit('update:overlay', { width: overlayW.value, height: overlayH.value, x: overlayX.value, y: overlayY.value })
@@ -166,20 +163,21 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     resizing = false
     window.removeEventListener('mousemove', onResize)
     window.removeEventListener('mouseup', stopResize)
-    if (pz && pz()) pz().resume()
+
+    if (panzoom && panzoom()) {
+      panzoom().resume()
+    }
   }
 
   function startDrag(e) {
     dragging = true
 
-    if (pz && pz()) {
-      pz().pause()
+    if (panzoom && panzoom()) {
+      panzoom().pause()
     }
 
-    const currentZoom = pz && pz() ? pz().getTransform().scale : 1
+    const currentZoom = panzoom && panzoom() ? panzoom().getTransform().scale : 1
     dragStart.scale = initialScale.value * currentZoom
-
-    const rect = panCont.value.getBoundingClientRect()
     dragStart.startX = e.clientX
     dragStart.startY = e.clientY
     dragStart.origX = overlayX.value
@@ -194,18 +192,16 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
       return
     }
 
-    const dx = (e.clientX - dragStart.startX) / dragStart.scale
-    const dy = (e.clientY - dragStart.startY) / dragStart.scale
+    const moveX = (e.clientX - dragStart.startX) / dragStart.scale
+    const moveY = (e.clientY - dragStart.startY) / dragStart.scale
+    const maxWidth = maxW.value || 1
+    const maxHeight = maxH.value || 1
 
-    const MAXW = maxW.value || 1
-    const MAXH = maxH.value || 1
+    let newX = dragStart.origX + moveX
+    let newY = dragStart.origY + moveY
 
-    let newX = dragStart.origX + dx
-    let newY = dragStart.origY + dy
-
-    newX = Math.max(0, Math.min(newX, MAXW - overlayW.value))
-    newY = Math.max(0, Math.min(newY, MAXH - overlayH.value))
-
+    newX = Math.max(0, Math.min(newX, maxWidth - overlayW.value))
+    newY = Math.max(0, Math.min(newY, maxHeight - overlayH.value))
     overlayX.value = Math.round(newX)
     overlayY.value = Math.round(newY)
 
@@ -216,7 +212,10 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     dragging = false
     window.removeEventListener('mousemove', onDrag)
     window.removeEventListener('mouseup', stopDrag)
-    if (pz && pz()) pz().resume()
+
+    if (panzoom && panzoom()) {
+      panzoom().resume()
+    }
   }
 
   return {
@@ -226,12 +225,12 @@ export function useOverlay({ emit, maxW, maxH, panCont, initialScale, pz, pdfCan
     overlayH,
     overlayVisible,
     overlayStyle,
-    dirs,
+    resizeHandles,
     setupOverlay,
     showOverlay,
     hideOverlay,
-    toggleOverlayVisibility,
-    overlayBoxPdfCoords,
+    setOverlayVisible,
+    getPdfOverlayBox,
     startResize,
     startDrag,
   }

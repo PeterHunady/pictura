@@ -1,17 +1,16 @@
 import { ref, nextTick, watch } from 'vue'
 
-const CAL_KEY = 'imageDrop.cssBaseDpi'
+const CALIBRATION_KEY = 'imageDrop.cssBaseDpi'
 const CARD_SLIDER_KEY = 'imageDrop.cardSliderValue'
 const REF_WIDTH_KEY = 'imageDrop.referenceWidthMm'
 
-export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayScale, referenceWidthMm }) {
-  const calibrationBaseCssDpi = ref(null)
-  const calOpen = ref(false)
-  const calMeasuredMm = ref(100)
-  const calLineEl = ref(null)
-  const calCssPx = ref(0)
-  const calError = ref('')
-
+export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScale, referenceWidthMm }) {
+  const calibrationDpi = ref(null)
+  const calibrationOpen = ref(false)
+  const calibrationMeasured = ref(100)
+  const calibrationLineEl = ref(null)
+  const calibrationCssPx = ref(0)
+  const calibrationError = ref('')
   const calibrationMode = ref('line')
   const cardSliderValue = ref(100)
   const cardImageEl = ref(null)
@@ -26,149 +25,150 @@ export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayS
     localStorage.setItem(REF_WIDTH_KEY, newValue.toString())
   })
 
-  function getPageZoomSafe() {
-    return (window.visualViewport && typeof window.visualViewport.scale === 'number')
-      ? (window.visualViewport.scale || 1)
-      : 1
+  function getPageZoom() {
+    return (window.visualViewport && typeof window.visualViewport.scale === 'number') ? (window.visualViewport.scale || 1) : 1
   }
 
-  function applyCalibratedEffectiveDpiFromBase() {
-    if (!calibrationBaseCssDpi.value) return
-    const zoom = getPageZoomSafe()
-    screenDPI.value = calibrationBaseCssDpi.value / zoom
+  function updateCalibratedDpi() {
+    if (!calibrationDpi.value) {
+      return
+    }
 
-    recomputeScaleBounds()
+    const zoom = getPageZoom()
+    screenDPI.value = calibrationDpi.value / zoom
+    updateScaleLimits()
     updateDisplayScale()
   }
 
   function attachCalibrationListeners() {
-    window.visualViewport?.addEventListener('resize', applyCalibratedEffectiveDpiFromBase)
-    window.addEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+    window.visualViewport?.addEventListener('resize', updateCalibratedDpi)
+    window.addEventListener('resize', updateCalibratedDpi)
   }
 
   function detachCalibrationListeners() {
-    window.visualViewport?.removeEventListener('resize', applyCalibratedEffectiveDpiFromBase)
-    window.removeEventListener('resize', applyCalibratedEffectiveDpiFromBase)
+    window.visualViewport?.removeEventListener('resize', updateCalibratedDpi)
+    window.removeEventListener('resize', updateCalibratedDpi)
   }
 
-  function measureCalLinePx() {
-    if (calLineEl.value) {
-      calCssPx.value = calLineEl.value.getBoundingClientRect().width
+  function measureCalibrationLine() {
+    if (calibrationLineEl.value) {
+      calibrationCssPx.value = calibrationLineEl.value.getBoundingClientRect().width
     }
   }
 
   function openCalibration() {
-    calOpen.value = true
+    calibrationOpen.value = true
     nextTick(() => {
-      measureCalLinePx()
+      measureCalibrationLine()
 
-      if (calibrationBaseCssDpi.value && calCssPx.value > 0) {
-        const effectiveCssDpi = calibrationBaseCssDpi.value / getPageZoomSafe()
-        const savedMm = (calCssPx.value * 25.4) / effectiveCssDpi
-        calMeasuredMm.value = Math.round(savedMm * 10) / 10
+      if (calibrationDpi.value && calibrationCssPx.value > 0) {
+        const measuredDpi = calibrationDpi.value / getPageZoom()
+        const savedMm = (calibrationCssPx.value * 25.4) / measuredDpi
+        calibrationMeasured.value = Math.round(savedMm * 10) / 10
       } else {
-        calMeasuredMm.value = 100
+        calibrationMeasured.value = 100
       }
 
-      window.addEventListener('resize', measureCalLinePx)
+      window.addEventListener('resize', measureCalibrationLine)
     })
   }
 
   function closeCalibration() {
-    calOpen.value = false
-    calError.value = ''
+    calibrationOpen.value = false
+    calibrationError.value = ''
     calibrationMode.value = 'line'
-    window.removeEventListener('resize', measureCalLinePx)
+    window.removeEventListener('resize', measureCalibrationLine)
   }
 
-  function applyCalibration(pz, basePixelWidth, initialScale, panCont, displayScale) {
-    measureCalLinePx()
-    const mm = Number(calMeasuredMm.value)
+  function applyCalibration(panzoom, basePixelWidth, initialScale, canvasWrapper, displayScale) {
+    measureCalibrationLine()
+    const mm = Number(calibrationMeasured.value)
+
     if (!Number.isFinite(mm) || mm <= 0) {
-      calError.value = 'Please enter a positive value in mm.'
+      calibrationError.value = 'Please enter a positive value in mm.'
       return
     }
 
-    const effectiveCssDpi = (calCssPx.value * 25.4) / mm
-    const baseCssDpi = effectiveCssDpi * getPageZoomSafe()
+    const measuredDpi = (calibrationCssPx.value * 25.4) / mm
+    const savedDpi = measuredDpi * getPageZoom()
 
-    calibrationBaseCssDpi.value = baseCssDpi
-    localStorage.setItem(CAL_KEY, String(baseCssDpi))
+    calibrationDpi.value = savedDpi
+    localStorage.setItem(CALIBRATION_KEY, String(savedDpi))
 
     detachCalibrationListeners()
     attachCalibrationListeners()
 
-    const newDpi = baseCssDpi / getPageZoomSafe()
+    const newDpi = savedDpi / getPageZoom()
     screenDPI.value = newDpi
 
-    if (pz && basePixelWidth.value > 0) {
-      const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value;
-      const targetScreenWidthPx = referenceWidthPx;
-      const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
-      const targetUserScale = targetAbsoluteScale / initialScale.value
+    if (panzoom && basePixelWidth.value > 0) {
+      const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
+      const referenceScale = referenceWidth / basePixelWidth.value
+      const zoomScale = referenceScale / initialScale.value
 
-      const r = panCont.value.getBoundingClientRect()
-      const cx = r.left + r.width / 2
-      const cy = r.top  + r.height / 2
-      pz.zoomAbs(cx, cy, targetUserScale)
+      const rect = canvasWrapper.value.getBoundingClientRect()
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+
+      panzoom.zoomAbs(centerX, centerY, zoomScale)
     }
 
     displayScale.value = 100
-    recomputeScaleBounds()
+    updateScaleLimits()
     updateDisplayScale()
     closeCalibration()
   }
 
-  function applyCardCalibration(pz, basePixelWidth, initialScale, panCont, displayScale) {
+  function applyCardCalibration(panzoom, basePixelWidth, initialScale, canvasWrapper, displayScale) {
     if (!cardImageEl.value) {
-      calError.value = 'Card image not loaded.'
+      calibrationError.value = 'Card image not loaded.'
       return
     }
 
     const cardRect = cardImageEl.value.getBoundingClientRect()
-    const displayedCardWidthCssPx = cardRect.width
+    const displayedCardWidth = cardRect.width
 
-    if (!displayedCardWidthCssPx || displayedCardWidthCssPx <= 0) {
-      calError.value = 'Could not measure card size.'
+    if (!displayedCardWidth || displayedCardWidth <= 0) {
+      calibrationError.value = 'Could not measure card size.'
       return
     }
 
-    const effectiveCssDpi = (displayedCardWidthCssPx * 25.4) / CARD_WIDTH_MM
-    const baseCssDpi = effectiveCssDpi * getPageZoomSafe()
-
-    calibrationBaseCssDpi.value = baseCssDpi
-    localStorage.setItem(CAL_KEY, String(baseCssDpi))
+    const measuredDpi = (displayedCardWidth * 25.4) / CARD_WIDTH_MM
+    const savedDpi = measuredDpi * getPageZoom()
+    calibrationDpi.value = savedDpi
+    localStorage.setItem(CALIBRATION_KEY, String(savedDpi))
 
     detachCalibrationListeners()
     attachCalibrationListeners()
 
-    const newDpi = baseCssDpi / getPageZoomSafe()
+    const newDpi = savedDpi / getPageZoom()
     screenDPI.value = newDpi
 
-    if (pz && basePixelWidth.value > 0) {
-      const referenceWidthPx = (referenceWidthMm.value / 25.4) * screenDPI.value;
-      const targetScreenWidthPx = referenceWidthPx;
-      const targetAbsoluteScale = targetScreenWidthPx / basePixelWidth.value
-      const targetUserScale = targetAbsoluteScale / initialScale.value
+    if (panzoom && basePixelWidth.value > 0) {
+      const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
+      const referenceScale = referenceWidth / basePixelWidth.value
+      const zoomScale = referenceScale / initialScale.value
 
-      const r = panCont.value.getBoundingClientRect()
-      const cx = r.left + r.width / 2
-      const cy = r.top  + r.height / 2
-      pz.zoomAbs(cx, cy, targetUserScale)
+      const rect = canvasWrapper.value.getBoundingClientRect()
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+
+      panzoom.zoomAbs(centerX, centerY, zoomScale)
     }
 
     displayScale.value = 100
-    recomputeScaleBounds()
+    updateScaleLimits()
     updateDisplayScale()
     closeCalibration()
   }
 
   function clearCalibration() {
-    localStorage.removeItem(CAL_KEY)
-    calibrationBaseCssDpi.value = null
+    localStorage.removeItem(CALIBRATION_KEY)
+    calibrationDpi.value = null
+
     detachCalibrationListeners()
     measureCssDpi1in()
-    recomputeScaleBounds()
+    updateScaleLimits()
     updateDisplayScale()
   }
 
@@ -181,16 +181,18 @@ export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayS
     const cssDpi = el.offsetWidth || 96
     document.body.removeChild(el)
     screenDPI.value = cssDpi
-    recomputeScaleBounds()
+
+    updateScaleLimits()
     updateDisplayScale()
   }
 
   function initCalibration() {
-    const savedBase = parseFloat(localStorage.getItem(CAL_KEY))
-    if (Number.isFinite(savedBase) && savedBase > 20 && savedBase < 2000) {
-      calibrationBaseCssDpi.value = savedBase
+    const savedDpi = parseFloat(localStorage.getItem(CALIBRATION_KEY))
+
+    if (Number.isFinite(savedDpi) && savedDpi > 20 && savedDpi < 2000) {
+      calibrationDpi.value = savedDpi
       attachCalibrationListeners()
-      applyCalibratedEffectiveDpiFromBase()
+      updateCalibratedDpi()
     } else {
       measureCssDpi1in()
     }
@@ -200,19 +202,19 @@ export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayS
       cardSliderValue.value = savedSlider
     }
 
-    const savedRefWidth = parseFloat(localStorage.getItem(REF_WIDTH_KEY))
-    if (Number.isFinite(savedRefWidth) && savedRefWidth > 0) {
-      referenceWidthMm.value = savedRefWidth
+    const savedReferenceWidth = parseFloat(localStorage.getItem(REF_WIDTH_KEY))
+    if (Number.isFinite(savedReferenceWidth) && savedReferenceWidth > 0) {
+      referenceWidthMm.value = savedReferenceWidth
     }
   }
 
   return {
-    calibrationBaseCssDpi,
-    calOpen,
-    calMeasuredMm,
-    calLineEl,
-    calCssPx,
-    calError,
+    calibrationDpi,
+    calibrationOpen,
+    calibrationMeasured,
+    calibrationLineEl,
+    calibrationCssPx,
+    calibrationError,
     calibrationMode,
     cardSliderValue,
     cardImageEl,
@@ -223,10 +225,10 @@ export function useCalibration({ screenDPI, recomputeScaleBounds, updateDisplayS
     applyCalibration,
     applyCardCalibration,
     clearCalibration,
-    measureCalLinePx,
+    measureCalibrationLine,
     measureCssDpi1in,
     initCalibration,
     detachCalibrationListeners,
-    getPageZoomSafe,
+    getPageZoom,
   }
 }

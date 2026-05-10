@@ -12,11 +12,14 @@ let state = {
 };
 
 function uuidv4() {
-  if (crypto?.randomUUID) return crypto.randomUUID();
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
-    const r = (crypto.getRandomValues(new Uint8Array(1))[0] & 0xf) >> 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
+  if (crypto?.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, char => {
+    const randomValue = (crypto.getRandomValues(new Uint8Array(1))[0] & 0xf) >> 0;
+    const uuidValue = char === "x" ? randomValue : (randomValue & 0x3) | 0x8;
+    return uuidValue.toString(16);
   });
 }
 
@@ -34,10 +37,15 @@ function setCookie(name, value, days) {
   document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
 }
 
-function normalizeFmt(fmt) {
-  const f = String(fmt || "").trim().toLowerCase();
-  if (f === "jpeg") return "jpg";
-  if (f === "jpg" || f === "png" || f === "pdf") return f;
+function normalizeFmt(format) {
+  const normalized = String(format || "").trim().toLowerCase();
+  if (normalized === "jpeg") {
+    return "jpg";
+  }
+
+  if (normalized === "jpg" || normalized === "png" || normalized === "pdf") {
+    return normalized;
+  }
   return "png";
 }
 
@@ -50,8 +58,13 @@ function postPayload(payload) {
   return true;
 }
 
-export function isActive() { return !!state.sessionId && !state.closed; }
-export function hasActive() { return isActive(); }
+export function isActive() { 
+  return !!state.sessionId && !state.closed; 
+}
+
+export function hasActive() { 
+  return isActive();
+}
 
 export function startSession() {
   if (isActive()) return state.sessionId;
@@ -69,19 +82,22 @@ export function startSession() {
 }
 
 export function log(name, data = {}) {
-  if (!isActive()) startSession();
+  if (!isActive()) {
+    startSession();
+  }
   state.actions.push({ t: name, ts: Date.now(), ...data });
 }
 
 export function setSourceFormat(fmt) {
-  const f = normalizeFmt(fmt);
-  state.sourceFormat = f;
-  state.currentFormat = f;
+  const normalized = normalizeFmt(fmt);
+  state.sourceFormat = normalized;
+  state.currentFormat = normalized;
 }
 
-export function setExportFormat(fmt) {
-  const to = normalizeFmt(fmt);
+export function setExportFormat(format) {
+  const to = normalizeFmt(format);
   const from = normalizeFmt(state.currentFormat);
+
   if (to !== from) {
     log("export_format_change", { from, to });
     state.currentFormat = to;
@@ -90,17 +106,11 @@ export function setExportFormat(fmt) {
 
 export function endSession(extra = {}) {
   if (!isActive()) {
-    console.warn('[Analytics] endSession called but no active session');
     return false;
   }
   const actions = [...state.actions, ...(Array.isArray(extra.actions) ? extra.actions : [])];
 
-  console.log('[Analytics] endSession - state.actions:', state.actions);
-  console.log('[Analytics] endSession - extra.actions:', extra.actions);
-  console.log('[Analytics] endSession - combined actions:', actions);
-
   if (actions.length === 0) {
-    console.warn('[Analytics] No actions to send, skipping payload');
     state.closed = true;
     state.sessionId = null;
     state.actions = [];
@@ -110,9 +120,7 @@ export function endSession(extra = {}) {
   }
 
   const payload = { session_id: state.sessionId, actions };
-  console.log('[Analytics] Sending payload:', payload);
   const ok = postPayload(payload);
-  console.log('[Analytics] Payload sent, result:', ok);
   state.closed = true;
   state.sessionId = null;
   state.actions = [];
@@ -122,14 +130,20 @@ export function endSession(extra = {}) {
 }
 
 export function endIfActive(extra = {}) {
-  if (isActive()) return endSession(extra);
+  if (isActive()) {
+    return endSession(extra);
+  }
   return false;
 }
 
 export function bindUnloadOnce() {
-  if (state.boundUnload) return;
+  if (state.boundUnload) {
+    return;
+  }
+
   state.boundUnload = true;
   const handler = () => { try { endIfActive(); } catch {} };
+
   window.addEventListener("pagehide", handler);
   window.addEventListener("beforeunload", handler);
 }

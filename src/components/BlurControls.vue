@@ -24,9 +24,9 @@
                 min="4"
                 max="180"
                 step="1"
-                v-model.number="localRadius"
+                v-model.number="radius"
               />
-              <span class="value ty-body-medium">{{ localRadius }}px</span>
+              <span class="value ty-body-medium">{{ radius }}px</span>
             </label>
 
             <label class="row">
@@ -36,9 +36,9 @@
                 min="1"
                 max="32"
                 step="1"
-                v-model.number="localIntensity"
+                v-model.number="intensity"
               />
-              <span class="value ty-body-medium">{{ localIntensity }}</span>
+              <span class="value ty-body-medium">{{ intensity }}</span>
             </label>
           </div>
 
@@ -61,15 +61,8 @@
   })
 
   const emit = defineEmits(['toggle', 'update:radius', 'update:intensity'])
-
-  const localRadius = ref(props.radius)
-  const localIntensity = ref(props.intensity)
-
-  watch(() => props.radius, v => (localRadius.value = v))
-  watch(() => props.intensity, v => (localIntensity.value = v))
-
-  watch(localRadius, v => emit('update:radius', v))
-  watch(localIntensity, v => emit('update:intensity', v))
+  const radius = ref(props.radius)
+  const intensity = ref(props.intensity)
 
   const onEnter = (el) => {
     el.style.height = '0px'
@@ -98,6 +91,12 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  watch(() => props.radius, v => (radius.value = v))
+  watch(() => props.intensity, v => (intensity.value = v))
+
+  watch(radius, v => emit('update:radius', v))
+  watch(intensity, v => emit('update:intensity', v))
 </script>
 
 <style scoped>

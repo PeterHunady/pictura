@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { hasAlphaImage } from '../utils/imageProcessing'
+import { hasAlphaImage } from './imageProcessing'
 
 const MAX_HISTORY = 30
 
@@ -17,8 +17,7 @@ export function useHistory({
   setupOverlay,
   setHasAlpha,
   detectBackground,
-  initPanzoom,
-  madeTransparentImg
+  imgTransparent
 }) {
   const history = []
   const future = []
@@ -26,10 +25,6 @@ export function useHistory({
 
   function pdfBytes() {
     return originalPdf.value instanceof Uint8Array ? originalPdf.value.slice() : new Uint8Array(originalPdf.value)
-  }
-
-  function makeDocSig() {
-    return `${originalFileName.value}|${originalFileSize.value}|${originalLastModified.value}`
   }
 
   function makeSnapshot() {
@@ -90,11 +85,13 @@ export function useHistory({
           height: img.naturalHeight,
           lastModified: snap.lastModified,
         })
+
         setupOverlay(img.naturalWidth, img.naturalHeight)
-        madeTransparentImg.value = false
-        const alphaNow = hasAlphaImage(img)
-        setHasAlpha(alphaNow)
-        if (!alphaNow) {
+        imgTransparent.value = false
+        const isAlpha = hasAlphaImage(img)
+        setHasAlpha(isAlpha)
+
+        if (!isAlpha) {
           detectBackground()
         } else {
           emit('update:bgcolor', null)

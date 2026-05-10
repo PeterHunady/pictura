@@ -19,11 +19,11 @@
           <div class="resize-fields" v-if="meta">
             <div class="input-row">
               <div class="input-group ty-body-medium">
-                <p>Width: {{ w }}</p>
+                <p>Width: {{ displayWidth }}</p>
               </div>
 
               <div class="input-group ty-body-medium">
-                <p>Height: {{ h }}</p>
+                <p>Height: {{ displayHeight }}</p>
               </div>
             </div>
 
@@ -31,7 +31,7 @@
               <button class="crop-btn ty-body-small bg-blue600" @click="emit('crop')">
                 Crop to Content
               </button>
-              <button class="apply-btn ty-body-small bg-lime600" @click="onApply">
+              <button class="apply-btn ty-body-small bg-lime600" @click="apply">
                 Apply
               </button>
             </div>
@@ -55,31 +55,12 @@
   })
 
   const emit = defineEmits(['crop','preview','apply','toggle'])
-  const w = ref(0)
-  const h = ref(0)
+  const displayWidth = ref(0)
+  const displayHeight = ref(0)
 
-  watch(() => props.meta, m => {
-      w.value = m?.width  ? Math.round(m.width)  : 0
-      h.value = m?.height ? Math.round(m.height) : 0
-    }, { immediate: true }
-  )
-
-  watch(() => [props.initialSize.width, props.initialSize.height], ([nw, nh]) => {
-    if (nw > 0 && nh > 0 && props.meta) {
-      w.value = Math.round(Math.min(nw, props.meta.width))
-      h.value = Math.round(Math.min(nh, props.meta.height))
-    }}, { immediate: true }
-  )
-
-  watch([w, h], ([nw, nh]) => { 
-    if (nw > 0 && nh > 0) { 
-      emit('preview', { width: nw, height: nh })
-    }
-  })
-
-  function onApply() {
-    if (w.value > 0 && h.value > 0) {
-      emit('apply', { width: w.value, height: h.value })
+  function apply() {
+    if (displayWidth.value > 0 && displayHeight.value > 0) {
+      emit('apply', { width: displayWidth.value, height: displayHeight.value })
     }
   }
 
@@ -110,6 +91,25 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  watch(() => props.meta, m => {
+      displayWidth.value = m?.width  ? Math.round(m.width) : 0
+      displayHeight.value = m?.height ? Math.round(m.height) : 0
+    }, { immediate: true }
+  )
+
+  watch(() => [props.initialSize.width, props.initialSize.height], ([nw, nh]) => {
+    if (nw > 0 && nh > 0 && props.meta) {
+      displayWidth.value = Math.round(Math.min(nw, props.meta.width))
+      displayHeight.value = Math.round(Math.min(nh, props.meta.height))
+    }}, { immediate: true }
+  )
+
+  watch([displayWidth, displayHeight], ([nw, nh]) => {
+    if (nw > 0 && nh > 0) {
+      emit('preview', { width: nw, height: nh })
+    }
+  })
 </script>
 
 <style scoped>

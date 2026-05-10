@@ -1,10 +1,10 @@
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument } from 'pdf-lib'
-import { canvasToBlob, extOf } from '../utils/imageProcessing'
+import { canvasToBlob, extOf } from './imageProcessing'
 
 const { getDocument } = pdfjsLib
 
-const PDF_RASTER_OPS_DPI = 600
+const PDF_EXPORT_DPI = 600
 const MAX_CANVAS_PIXELS = 25e6
 
 export function useExport({
@@ -15,13 +15,10 @@ export function useExport({
   overlayY,
   overlayW,
   overlayH,
-  overlayBoxPdfCoords,
   pdfBytes,
-  originalPdf,
   currentPage,
   pdfRenderScale,
   preview,
-  originalFileName,
   maxW,
   maxH,
 }) {
@@ -29,86 +26,75 @@ export function useExport({
     return overlayW.value > 0 && overlayH.value > 0
   }
 
-  function getOverlayOnCanvas(canvas) {
-    if (!canvas || !canvas.width || !canvas.height) return null
+  function getCropBox(canvas) {
+    if (!canvas || !canvas.width || !canvas.height) {
+      return null
+    }
 
-    const W = canvas.width
-    const H = canvas.height
+    const canvasWidth = canvas.width
+    const canvasHeight = canvas.height
 
     if (!hasOverlayBox()) {
-      return { sx: 0, sy: 0, sw: W, sh: H }
+      return { startX: 0, startY: 0, cropWidth: canvasWidth, cropHeight: canvasHeight }
     }
 
-    let sx = overlayX.value
-    let sy = overlayY.value
-    let sw = overlayW.value
-    let sh = overlayH.value
+    let startX = overlayX.value
+    let startY = overlayY.value
+    let cropWidth = overlayW.value
+    let cropHeight = overlayH.value
 
-    if (sw <= 0 || sh <= 0) {
-      return { sx: 0, sy: 0, sw: W, sh: H }
-    }
-
-    if (sx < 0) {
-      sw += sx
-      sx = 0
-    }
-    if (sy < 0) {
-      sh += sy
-      sy = 0
+    if (cropWidth <= 0 || cropHeight <= 0) {
+      return { startX: 0, startY: 0, cropWidth: canvasWidth, cropHeight: canvasHeight }
     }
 
-    if (sx + sw > W) {
-      sw = W - sx
+    if (startX < 0) {
+      cropWidth += startX
+      startX = 0
     }
-    if (sy + sh > H) {
-      sh = H - sy
+    if (startY < 0) {
+      cropHeight += startY
+      startY = 0
     }
 
-    sw = Math.max(1, Math.min(sw, W))
-    sh = Math.max(1, Math.min(sh, H))
+    if (startX + cropWidth > canvasWidth) {
+      cropWidth = canvasWidth - startX
+    }
+    if (startY + cropHeight > canvasHeight) {
+      cropHeight = canvasHeight - startY
+    }
+
+    cropWidth = Math.max(1, Math.min(cropWidth, canvasWidth))
+    cropHeight = Math.max(1, Math.min(cropHeight, canvasHeight))
 
     return {
-      sx: Math.round(sx),
-      sy: Math.round(sy),
-      sw: Math.round(sw),
-      sh: Math.round(sh),
+      startX: Math.round(startX),
+      startY: Math.round(startY),
+      cropWidth: Math.round(cropWidth),
+      cropHeight: Math.round(cropHeight),
     }
   }
   
-  async function getPdfPageAndCrop() {
+  async function getPdfCropData() {
     const bytes = pdfBytes()
-    const srcDoc = await PDFDocument.load(bytes, { ignoreEncryption: true })
-    const pages = srcDoc.getPages()
-
-    const idx = Math.max(
-      0,
-      Math.min(pages.length - 1, (currentPage?.value || 1) - 1),
-    )
-
-    const srcPage = pages[idx]
+    const sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
+    const pages = sourcePdf.getPages()
+    const index = Math.max(0, Math.min(pages.length - 1, (currentPage?.value || 1) - 1))
+    const srcPage = pages[index]
     const { width: pageW, height: pageH } = srcPage.getSize()
 
     if (!hasOverlayBox() || !pdfCanvas.value?.width) {
-      return {
-        srcDoc,
-        srcPage,
-        pageW,
-        pageH,
-        crop: { x: 0, y: 0, width: pageW, height: pageH },
-      }
+      return { sourcePdf, srcPage, pageW, pageH, crop: { x: 0, y: 0, width: pageW, height: pageH }}
     }
 
     const canvas = pdfCanvas.value
-    const scale =
-      pdfRenderScale.value || canvas.width / pageW || 1
+    const scale = pdfRenderScale.value || canvas.width / pageW || 1
 
-    const ov = getOverlayOnCanvas(canvas)
-    const boxW = ov.sw / scale
-    const boxH = ov.sh / scale
-    const x = ov.sx / scale
-    const yTop = ov.sy / scale
-
-    const y = pageH - (yTop + boxH)
+    const cropBox = getCropBox(canvas)
+    const boxW = cropBox.cropWidth / scale
+    const boxH = cropBox.cropHeight / scale
+    const x = cropBox.startX / scale
+    const cropTop = cropBox.startY / scale
+    const y = pageH - (cropTop + boxH)
 
     let left = Math.max(0, Math.min(pageW, x))
     let bottom = Math.max(0, Math.min(pageH, y))
@@ -118,130 +104,107 @@ export function useExport({
     const width = Math.max(1, right - left)
     const height = Math.max(1, top - bottom)
 
-    return {
-      srcDoc,
-      srcPage,
-      pageW,
-      pageH,
-      crop: { x: left, y: bottom, width, height },
-    }
+    return { sourcePdf, srcPage, pageW, pageH, crop: { x: left, y: bottom, width, height }}
   }
 
-  async function estimateExport({ format = 'png' } = {}) {
+  async function prepareExport({ format = 'png' } = {}) {
     format = String(format || 'png').toLowerCase()
 
     if (isPdf.value) {
       if (format === 'pdf') {
-        const { srcPage, crop } = await getPdfPageAndCrop()
-        const outDoc = await PDFDocument.create()
+        const { srcPage, crop } = await getPdfCropData()
+        const croppedPdf = await PDFDocument.create()
+        const croppedPage = await croppedPdf.embedPage(srcPage, { left: crop.x, bottom: crop.y, right: crop.x + crop.width, top: crop.y + crop.height })
+        croppedPdf.addPage([crop.width, crop.height]).drawPage(croppedPage, { x: 0, y: 0 })
 
-        const emb = await outDoc.embedPage(srcPage, {
-          left: crop.x,
-          bottom: crop.y,
-          right: crop.x + crop.width,
-          top: crop.y + crop.height,
-        })
-
-        outDoc.addPage([crop.width, crop.height]).drawPage(emb, { x: 0, y: 0 })
-
-        const bytes = await outDoc.save()
+        const bytes = await croppedPdf.save()
         const blob = new Blob([bytes], { type: 'application/pdf' })
-        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
+        return { blob, sizeBytes: blob.size, fileExtension: 'pdf', mime: 'application/pdf' }
       }
 
       const src = getSourceCanvas()
-      if (!src) return { blob: null, sizeBytes: 0, ext: format }
+      if (!src) {
+        return { blob: null, sizeBytes: 0, fileExtension: format }
+      }
 
-      const ov = getOverlayOnCanvas(src)
-      const { sx, sy, sw, sh } = ov
-
-      const c = document.createElement('canvas')
-      c.width = sw
-      c.height = sh
-      c.getContext('2d').drawImage(src, sx, sy, sw, sh, 0, 0, sw, sh)
+      const cropBox = getCropBox(src)
+      const { startX, startY, cropWidth, cropHeight } = cropBox
+      const canvas = document.createElement('canvas')
+      canvas.width = cropWidth
+      canvas.height = cropHeight
+      canvas.getContext('2d').drawImage(src, startX, startY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
 
       const mime = format === 'jpg' ? 'image/jpeg' : 'image/png'
-      const blob = await canvasToBlob(c, mime)
+      const blob = await canvasToBlob(canvas, mime)
       const size = blob ? blob.size : 0
-      return { blob, sizeBytes: size, ext: format, mime }
+      return { blob, sizeBytes: size, fileExtension: format, mime }
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) return { blob: null, sizeBytes: 0, ext: format }
+    if (!img?.naturalWidth) {
+      return { blob: null, sizeBytes: 0, fileExtension: format }
+    }
 
-    const hasOv = overlayW.value > 0 && overlayH.value > 0
-    const sx = hasOv ? overlayX.value : 0
-    const sy = hasOv ? overlayY.value : 0
-    const sw = hasOv ? overlayW.value : img.naturalWidth
-    const sh = hasOv ? overlayH.value : img.naturalHeight
-
-    const c = document.createElement('canvas')
-    c.width = sw
-    c.height = sh
-    c.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
+    const hasOverlay = overlayW.value > 0 && overlayH.value > 0
+    const startX = hasOverlay ? overlayX.value : 0
+    const startY = hasOverlay ? overlayY.value : 0
+    const cropWidth = hasOverlay ? overlayW.value : img.naturalWidth
+    const cropHeight = hasOverlay ? overlayH.value : img.naturalHeight
+    const canvas = document.createElement('canvas')
+    canvas.width = cropWidth
+    canvas.height = cropHeight
+    canvas.getContext('2d').drawImage(img, startX, startY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
 
     if (format === 'pdf') {
       try {
-        const outDoc = await PDFDocument.create()
-
+        const croppedPdf = await PDFDocument.create()
         const tempCanvas = document.createElement('canvas')
-        tempCanvas.width = sw
-        tempCanvas.height = sh
-        const tempCtx = tempCanvas.getContext('2d')
-        tempCtx.fillStyle = '#ffffff'
-        tempCtx.fillRect(0, 0, sw, sh)
-        tempCtx.drawImage(c, 0, 0)
+        tempCanvas.width = cropWidth
+        tempCanvas.height = cropHeight
+
+        const pdfImageContext = tempCanvas.getContext('2d')
+        pdfImageContext.fillStyle = '#ffffff'
+        pdfImageContext.fillRect(0, 0, cropWidth, cropHeight)
+        pdfImageContext.drawImage(canvas, 0, 0)
 
         const jpegBlob = await canvasToBlob(tempCanvas, 'image/jpeg')
         const jpegArrayBuffer = await jpegBlob.arrayBuffer()
         const jpegBytes = new Uint8Array(jpegArrayBuffer)
+        const imgJpeg = await croppedPdf.embedJpg(jpegBytes)
+        const imageSize = imgJpeg.scale(1)
 
-        const imgJpeg = await outDoc.embedJpg(jpegBytes)
-        const imgDims = imgJpeg.scale(1)
+        const page = croppedPdf.addPage([imageSize.width, imageSize.height])
+        page.drawImage(imgJpeg, { x: 0, y: 0, width: imageSize.width, height: imageSize.height })
 
-        const page = outDoc.addPage([imgDims.width, imgDims.height])
-        page.drawImage(imgJpeg, {
-          x: 0,
-          y: 0,
-          width: imgDims.width,
-          height: imgDims.height,
-        })
-
-        const bytes = await outDoc.save()
+        const bytes = await croppedPdf.save()
         const blob = new Blob([bytes], { type: 'application/pdf' })
-        return { blob, sizeBytes: blob.size, ext: 'pdf', mime: 'application/pdf' }
+        return { blob, sizeBytes: blob.size, fileExtension: 'pdf', mime: 'application/pdf' }
       } catch (error) {
         console.error('PDF creation error:', error)
-        return { blob: null, sizeBytes: 0, ext: format }
+        return { blob: null, sizeBytes: 0, fileExtension: format }
       }
     }
 
     const mime = format === 'jpg' ? 'image/jpeg' : 'image/png'
-    const blob = await canvasToBlob(c, mime)
+    const blob = await canvasToBlob(canvas, mime)
     const size = blob ? blob.size : 0
-    return { blob, sizeBytes: size, ext: format, mime }
+    return { blob, sizeBytes: size, fileExtension: format, mime }
   }
 
   async function exportFile({ name = 'export', format = 'png' } = {}) {
     const JPG_QUALITY = 1
-    const ext = extOf(format)
+    const fileExtension = extOf(format)
     const cleanName = name.replace(/[\\/:*?"<>|]/g, '').trim() || 'export'
-    const filename = `${cleanName}.${ext}`
+    const filename = `${cleanName}.${fileExtension}`
 
     if (isPdf.value) {
       if (format === 'pdf') {
-        const { srcPage, crop } = await getPdfPageAndCrop()
-        const outDoc = await PDFDocument.create()
+        const { srcPage, crop } = await getPdfCropData()
+        const croppedPdf = await PDFDocument.create()
+        const croppedPage = await croppedPdf.embedPage(srcPage, { left: crop.x, bottom: crop.y, right: crop.x + crop.width, top: crop.y + crop.height })
+        croppedPdf.addPage([crop.width, crop.height]).drawPage(croppedPage, { x: 0, y: 0 })
 
-        const embedded = await outDoc.embedPage(srcPage, {
-          left: crop.x,
-          bottom: crop.y,
-          right: crop.x + crop.width,
-          top: crop.y + crop.height,
-        })
-        outDoc.addPage([crop.width, crop.height]).drawPage(embedded, { x: 0, y: 0 })
-
-        const bytes = await outDoc.save()
+        const bytes = await croppedPdf.save()
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
         triggerDownload(url, filename)
         return
@@ -249,76 +212,74 @@ export function useExport({
 
       const pdf = await getDocument({ data: pdfBytes() }).promise
       const page = await pdf.getPage(currentPage.value)
-
-      const vp1 = page.getViewport({ scale: 1 })
-      const dpiScale = Math.max(1, PDF_RASTER_OPS_DPI / 72)
-      const maxScaleByPixels =
-        Math.sqrt(MAX_CANVAS_PIXELS / (vp1.width * vp1.height)) || 1
+      const defaultViewport = page.getViewport({ scale: 1 })
+      const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
+      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
       const scale = Math.min(dpiScale, maxScaleByPixels)
-      const vp = page.getViewport({ scale })
+      const exportViewport = page.getViewport({ scale })
 
-      const off = document.createElement('canvas')
-      off.width = Math.round(vp.width)
-      off.height = Math.round(vp.height)
+      const tempCanvas = document.createElement('canvas')
+      tempCanvas.width = Math.round(exportViewport.width)
+      tempCanvas.height = Math.round(exportViewport.height)
 
       await page.render({
-        canvasContext: off.getContext('2d', {
-          willReadFrequently: true,
-          alpha: true,
-        }),
-        viewport: vp,
+        canvasContext: tempCanvas.getContext('2d', { willReadFrequently: true, alpha: true }),
+        viewport: exportViewport,
         background: 'rgba(0, 0, 0, 0)',
       }).promise
 
-      const factor = scale / (pdfRenderScale.value || 1)
+      const zoomFactor = scale / (pdfRenderScale.value || 1)
+      const prevCanvas = pdfCanvas.value || tempCanvas
+      const previousCropBox = getCropBox(prevCanvas)
 
-      const prevCanvas = pdfCanvas.value || off
-      const ovPrev = getOverlayOnCanvas(prevCanvas)
-
-      let ox, oy, ow, oh
-      if (!ovPrev) {
-        ox = 0
-        oy = 0
-        ow = off.width
-        oh = off.height
+      let exportX, exportY, exportWidth, exportHeight
+      if (!previousCropBox) {
+        exportX = 0
+        exportY = 0
+        exportWidth = tempCanvas.width
+        exportHeight = tempCanvas.height
       } else {
-        ox = Math.round(ovPrev.sx * factor)
-        oy = Math.round(ovPrev.sy * factor)
-        ow = Math.round(ovPrev.sw * factor)
-        oh = Math.round(ovPrev.sh * factor)
+        exportX = Math.round(previousCropBox.startX * zoomFactor)
+        exportY = Math.round(previousCropBox.startY * zoomFactor)
+        exportWidth = Math.round(previousCropBox.cropWidth * zoomFactor)
+        exportHeight = Math.round(previousCropBox.cropHeight * zoomFactor)
 
-        if (ox < 0) {
-          ow += ox
-          ox = 0
+        if (exportX < 0) {
+          exportWidth += exportX
+          exportX = 0
         }
-        if (oy < 0) {
-          oh += oy
-          oy = 0
+        if (exportY < 0) {
+          exportHeight += exportY
+          exportY = 0
         }
-        if (ox + ow > off.width) ow = off.width - ox
-        if (oy + oh > off.height) oh = off.height - oy
+        if (exportX + exportWidth > tempCanvas.width) {
+          exportWidth = tempCanvas.width - exportX
+        }
+        if (exportY + exportHeight > tempCanvas.height) {
+          exportHeight = tempCanvas.height - exportY
+        }
 
-        ow = Math.max(1, Math.min(ow, off.width))
-        oh = Math.max(1, Math.min(oh, off.height))
+        exportWidth = Math.max(1, Math.min(exportWidth, tempCanvas.width))
+        exportHeight = Math.max(1, Math.min(exportHeight, tempCanvas.height))
       }
 
-      const out = document.createElement('canvas')
-      out.width = ow
-      out.height = oh
-      const octx = out.getContext('2d')
-      octx.drawImage(off, ox, oy, ow, oh, 0, 0, ow, oh)
+      const exportCanvas = document.createElement('canvas')
+      exportCanvas.width = exportWidth
+      exportCanvas.height = exportHeight
+      const exportContext = exportCanvas.getContext('2d')
+      exportContext.drawImage(tempCanvas, exportX, exportY, exportWidth, exportHeight, 0, 0, exportWidth, exportHeight)
 
       let url
       if (format === 'png') {
-        url = out.toDataURL('image/png')
+        url = exportCanvas.toDataURL('image/png')
       } else {
         const white = document.createElement('canvas')
-        white.width = ow
-        white.height = oh
-        const wctx = white.getContext('2d')
-        wctx.fillStyle = '#ffffff'
-        wctx.fillRect(0, 0, ow, oh)
-        wctx.drawImage(out, 0, 0)
+        white.width = exportWidth
+        white.height = exportHeight
+        const jpegContext = white.getContext('2d')
+        jpegContext.fillStyle = '#ffffff'
+        jpegContext.fillRect(0, 0, exportWidth, exportHeight)
+        jpegContext.drawImage(exportCanvas, 0, 0)
         url = white.toDataURL('image/jpeg', JPG_QUALITY)
       }
 
@@ -327,53 +288,49 @@ export function useExport({
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) return
+    if (!img?.naturalWidth) {
+      return
+    }
 
     const hasOverlay = overlayW.value > 0 && overlayH.value > 0
     const x = hasOverlay ? overlayX.value : 0
     const y = hasOverlay ? overlayY.value : 0
-    const w = hasOverlay ? overlayW.value : maxW.value
-    const h = hasOverlay ? overlayH.value : maxH.value
+    const width = hasOverlay ? overlayW.value : maxW.value
+    const height = hasOverlay ? overlayH.value : maxH.value
 
-    const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    const ctx = c.getContext('2d')
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d')
 
     if (format === 'jpg') {
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, w, h)
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, width, height)
     }
-    ctx.drawImage(img, x, y, w, h, 0, 0, w, h)
+    context.drawImage(img, x, y, width, height, 0, 0, width, height)
 
     if (format === 'pdf') {
       try {
-        const outDoc = await PDFDocument.create()
+        const croppedPdf = await PDFDocument.create()
 
         const tempCanvas = document.createElement('canvas')
-        tempCanvas.width = w
-        tempCanvas.height = h
-        const tempCtx = tempCanvas.getContext('2d')
-        tempCtx.fillStyle = '#ffffff'
-        tempCtx.fillRect(0, 0, w, h)
-        tempCtx.drawImage(c, 0, 0)
+        tempCanvas.width = width
+        tempCanvas.height = height
+        const pdfImageContext = tempCanvas.getContext('2d')
+        pdfImageContext.fillStyle = '#ffffff'
+        pdfImageContext.fillRect(0, 0, width, height)
+        pdfImageContext.drawImage(canvas, 0, 0)
 
         const jpegBlob = await canvasToBlob(tempCanvas, 'image/jpeg')
         const jpegArrayBuffer = await jpegBlob.arrayBuffer()
         const jpegBytes = new Uint8Array(jpegArrayBuffer)
+        const imgJpeg = await croppedPdf.embedJpg(jpegBytes)
+        const imageSize = imgJpeg.scale(1)
 
-        const imgJpeg = await outDoc.embedJpg(jpegBytes)
-        const imgDims = imgJpeg.scale(1)
+        const page = croppedPdf.addPage([imageSize.width, imageSize.height])
+        page.drawImage(imgJpeg, { x: 0, y: 0, width: imageSize.width, height: imageSize.height })
 
-        const page = outDoc.addPage([imgDims.width, imgDims.height])
-        page.drawImage(imgJpeg, {
-          x: 0,
-          y: 0,
-          width: imgDims.width,
-          height: imgDims.height,
-        })
-
-        const bytes = await outDoc.save()
+        const bytes = await croppedPdf.save()
         const blob = new Blob([bytes], { type: 'application/pdf' })
         const url = URL.createObjectURL(blob)
 
@@ -394,32 +351,26 @@ export function useExport({
       return
     }
 
-    const url =
-      format === 'png'
-        ? c.toDataURL('image/png')
-        : c.toDataURL('image/jpeg', JPG_QUALITY)
-
+    const url = format === 'png' ? canvas.toDataURL('image/png'): canvas.toDataURL('image/jpeg', JPG_QUALITY)
     triggerDownload(url, filename)
   }
 
   async function download() {
     if (isPdf.value) {
-      const { srcPage, crop } = await getPdfPageAndCrop()
-      const outDoc = await PDFDocument.create()
+      const { srcPage, crop } = await getPdfCropData()
+      const croppedPdf = await PDFDocument.create()
 
-      const embedded = await outDoc.embedPage(srcPage, {
+      const croppedPage = await croppedPdf.embedPage(srcPage, {
         left: crop.x,
         bottom: crop.y,
         right: crop.x + crop.width,
         top: crop.y + crop.height,
       })
 
-      outDoc.addPage([crop.width, crop.height]).drawPage(embedded, { x: 0, y: 0 })
+      croppedPdf.addPage([crop.width, crop.height]).drawPage(croppedPage, { x: 0, y: 0 })
 
-      const bytes = await outDoc.save()
-      const url = URL.createObjectURL(
-        new Blob([bytes], { type: 'application/pdf' }),
-      )
+      const bytes = await croppedPdf.save()
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
 
       const a = document.createElement('a')
       a.href = url
@@ -454,7 +405,7 @@ export function useExport({
   }
 
   return {
-    estimateExport,
+    prepareExport,
     exportFile,
     download,
   }

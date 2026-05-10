@@ -10,7 +10,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from datetime import datetime
 
-
 def load_ndjson(path: Path) -> pd.DataFrame:
     rows = []
     with path.open("r", encoding="utf-8") as f:
@@ -60,7 +59,6 @@ def extract_timestamp(row):
 def make_plots(df: pd.DataFrame, outdir: Path):
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Common style settings
     BAR_COLOR = "#1f77b4"
     FIGSIZE = (10, 6)
     TITLE_FONTSIZE = 14

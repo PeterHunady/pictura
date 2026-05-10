@@ -7,19 +7,19 @@
             :reference-width-mm="referenceWidthMm"
             :min-scale="minScale"
             :max-scale="maxScale"
-            @update:scale="onScaleUpdate"
-            @update:reference-width="onReferenceWidthUpdate"
-            @visible="onToggleCropVisible"
+            @update:scale="scaleUpdate"
+            @update:reference-width="referenceWidthUpdate"
+            @visible="setCropVisible"
             @undo="onUndo"
             @redo="onRedo"
             @reset="onReset"
             @clear="onClear"
-            @calibrate="onOpenCalibration"
-            @clear-calibration="onClearCalibration"
+            @calibrate="openCalibration"
+            @clear-calibration="clearCalibration"
             @reset-to-100="onResetTo100"
         />
 
-        <ImageDrop
+        <ImageArea
             :right-gap="rightGap"
             :top-gap="topGap"
             :active-tool="activeTool"
@@ -28,20 +28,20 @@
             :mark-thickness="markThickness"
             :mark-color="markColor"
             :mark-shape="markShape"
-            ref="dropRef"
+            ref="imageArea"
             @update:preview="imagePreview = $event"
-            @update:meta="onMetaUpdate"
-            @update:overlay="onOverlayUpdate"
-            @update:bgcolor="onBgColorUpdate"
-            @update:scale="onScaleUpdateFromDrop"
+            @update:meta="metaUpdate"
+            @update:overlay="overlayUpdate"
+            @update:bgcolor="backgroundColorUpdate"
+            @update:scale="updateScaleInfo"
             @update:has-alpha="isTransparent = $event"
-            @editing="editingNow = true"
-            @blur-stroke="onBlurStroke"
-            @mark-shape="onMarkShape"
+            @editing="isEditing = true"
+            @blur-stroke="blurStroke"
+            @mark-shape="markShapeDraw"
         />
 
         <Sidebar
-            v-model="sidebarCollapsed"
+            v-model="sidebarClosed"
             :meta="imageMeta"
             :initial-size="{ width: cropWidth, height: cropHeight }"
             :initialColor="bgColor"
@@ -51,7 +51,7 @@
             :mark-thickness="markThickness"
             :mark-color="markColor"
             :mark-shape="markShape"
-            :export-bytes="exportPreviewBytes"
+            :export-bytes="exportBytes"
             :export-loading="exportLoading"
             :bg-transparent="isTransparent" 
             :export-suggested-name="exportName"
@@ -59,7 +59,7 @@
             :top-gap="topGap"
             :applied-grayscale-strength="lastGrayscaleStrength"
             :applied-bg-color="lastBgColor"
-            @set-active-tool="onSetActiveTool"
+            @set-active-tool="setActiveTool"
             @update-blur-radius="blurRadius = $event"
             @update-blur-intensity="blurIntensity = $event"
             @update-mark-thickness="markThickness = $event"
@@ -67,28 +67,28 @@
             @update-mark-shape="markShape = $event"
             @download="onDownload"
             @clear="onClear"
-            @crop="onCropToContent"
-            @preview-crop="onPreviewCrop"
-            @resize-crop="onApplyCrop"
-            @fix-artifacts="onFixArtifacts"
-            @apply-color="onApplyBgColor"
-            @highlight-artifacts="onHighlightArtifacts"
-            @apply-grayscale="onApplyGrayscale"
-            @preview-grayscale="onPreviewGrayscale"
-            @end-preview-grayscale="onEndPreviewGrayscale"
-            @preview-color="onPreviewBgColor"
-            @end-preview-color="onEndPreviewBgColor"
-            @request-export-preview="onRequestExportPreview"
-            @export="onExport"
-            @remove-background="onRemoveBackground"
+            @crop="cropToContent"
+            @preview-crop="previewCrop"
+            @resize-crop="applyCrop"
+            @fix-artifacts="fixArtifacts"
+            @apply-color="applyBackgroundColor"
+            @highlight-artifacts="highlightArtifacts"
+            @apply-grayscale="applyGrayscale"
+            @preview-grayscale="previewGrayscale"
+            @end-preview-grayscale="endPreviewGrayscale"
+            @preview-color="previewBgColor"
+            @end-preview-color="endPreviewBgColor"
+            @request-export-preview="updateExportSize"
+            @export="exportFile"
+            @remove-background="removeBackground"
         />
 
-        <PageGalleryDialog
+        <PdfPageDialog
             v-if="showPageDlg"
             :src="imagePreview"
             :pages="totalPages"
             v-model="pickPage"
-            @confirm="onConfirmPage"
+            @confirm="confirmPage"
             @cancel="showPageDlg = false"
         />
     </div>
@@ -97,13 +97,22 @@
 <script setup>
     import { ref, computed, onUnmounted, onMounted, nextTick } from 'vue'
     import { consumePendingFile } from '@/composables/usePendingFile'
-    import ImageDrop from '@/components/ImageDrop.vue'
+    import ImageArea from '@/components/ImageArea.vue'
     import Sidebar from '@/components/Sidebar.vue'
-    import PageGalleryDialog from '@/components/PageGalleryDialog.vue'
-    import TopBar from '@/components/TopBar.vue'
+    import PdfPageDialog from '@/components/PdfPageDialog.vue'
+    import TopBar from '@/components/Topbar.vue'
     import * as analytics from '@/analytics'
 
-    const dropRef = ref(null)
+    const sidebarClosed = ref(false)
+    const rightGap = computed(() =>
+        sidebarClosed.value ? '30px' : 'min(30vw, 300px)'
+    )
+
+    const topGap = '48px'
+    const initialDoc = ref(null)
+    const actionsPerformed = ref([])
+
+    const imageArea = ref(null)
     const imagePreview = ref(null)
     const imageMeta = ref(null)
     const cropWidth = ref(0)
@@ -113,23 +122,27 @@
     const showPageDlg = ref(false)
     const totalPages = ref(1)
     const pickPage = ref(1)
-    const lastDocSig = ref(null)
+    const lastPdfFileId = ref(null)
 
     const displayScale = ref(100)
     const referenceWidthMm = ref(210)
-    const calibrationBaseCssDpi = ref(null)
+    const calibrationDpi = ref(null)
     const showScale = ref(false)
     const minScale = ref(1)
     const maxScale = ref(10000)
 
     const exportName = ref(null)
     const exportType = ref(null)
-    const editingNow = ref(false)
-    const sourceSig = ref(null)
-    const isCalibrated = computed(() => calibrationBaseCssDpi.value != null)
+    const exportBytes = ref(null)
+    const exportLoading = ref(false)
+    const lastExportFormat = ref('png')
+    let exportTimer = null
+    const isEditing = ref(false)
+    const lastFileId = ref(null)
+    const isCalibrated = computed(() => calibrationDpi.value != null)
+
     const lastGrayscaleStrength = ref(null)
     const lastBgColor = ref(null)
-
     const activeTool = ref(null)
     const blurRadius = ref(28)
     const blurIntensity = ref(10)
@@ -137,231 +150,51 @@
     const markColor = ref('#ff0000')
     const markShape = ref('rect')
 
-    function inferFormat(meta) {
+    // --- Helpers ---
+
+    function detectFileFormat(meta) {
         const name = (meta?.name || '').toLowerCase()
         const type = (meta?.type || '').toLowerCase()
-        if (name.endsWith('.jpg') || name.endsWith('.jpeg') || type.includes('jpeg') || type.includes('jpg')) return 'jpg'
-        if (name.endsWith('.png') || type.includes('png')) return 'png'
-        if (name.endsWith('.pdf') || type.includes('pdf')) return 'pdf'
+
+        if (name.endsWith('.jpg') || name.endsWith('.jpeg') || type.includes('jpeg') || type.includes('jpg')) {
+            return 'jpg'
+        }
+
+        if (name.endsWith('.png') || type.includes('png')) {
+            return 'png'
+        }
+
+        if (name.endsWith('.pdf') || type.includes('pdf')) {
+            return 'pdf'
+        }
+
         return 'png'
     }
-
-    onMounted(() => {
-        if (typeof window === 'undefined') return
-        analytics.bindUnloadOnce?.()
-        const saved = parseFloat(localStorage.getItem('imageDrop.cssBaseDpi'))
-        if (Number.isFinite(saved) && saved > 20 && saved < 2000) {
-            calibrationBaseCssDpi.value = saved
-        }
-    })
-
-    const sidebarCollapsed = ref(false)
-    const rightGap = computed(() =>
-        sidebarCollapsed.value ? '30px' : 'min(30vw, 300px)'
-    )
-
-    const topGap = '48px'
-
-    const initialDoc = ref(null)
-    const actionsPerformed = ref([])
 
     function recordAction(name, data) {
         actionsPerformed.value.push({ t: name, ...(data || {}) })
     }
 
-    function onUndo() {
-        dropRef.value?.undo?.()
-        lastGrayscaleStrength.value = null
-        lastBgColor.value = null
-        activeTool.value = null
-    }
+    // --- File / Document ---
 
-    function onRedo() {
-        dropRef.value?.redo?.()
-    }
-
-    function onReset() {
-        dropRef.value?.resetToOriginal?.()
-        lastGrayscaleStrength.value = null
-        lastBgColor.value = null
-        activeTool.value = null
-    }
-
-    function onToggleCropVisible(visible) {
-        dropRef.value?.toggleOverlayVisibility?.(visible)
-    }
-
-    async function onOpenCalibration() {
-        try {
-            const dpi = await dropRef.value?.openCalibration?.()
-            calibrationBaseCssDpi.value = dpi || 96
-            recordAction('calibration')
-        } catch (e) {
-            calibrationBaseCssDpi.value = 96
-            recordAction('calibration')
-        }
-    }
-
-    function onClearCalibration() {
-        calibrationBaseCssDpi.value = null
-        dropRef.value?.clearCalibration?.()
-        recordAction('calibration_cleared')
-    }
-
-    onMounted(async () => {
-        const f = consumePendingFile()
-        if (!f) return
-        await nextTick()
-        if (dropRef.value?.loadExternalFile) {
-            await dropRef.value.loadExternalFile(f)
-        }
-    })
-
-    const exportPreviewBytes = ref(null)
-    const exportLoading = ref(false)
-    const lastExportFormat = ref('png')
-    let exportTimer = null
-
-    async function onRequestExportPreview({ name, format }) {
-        if (format && format !== lastExportFormat.value) {
-            analytics.setExportFormat?.(format)
-            lastExportFormat.value = format
-        }
-        exportLoading.value = true
-        try {
-            const res = await dropRef.value?.estimateExport({ format: lastExportFormat.value })
-            exportPreviewBytes.value = res?.sizeBytes ?? null
-        } finally {
-            exportLoading.value = false
-        }
-    }
-
-    async function recalcExportPreview() {
-        if (!dropRef.value) {
-            exportPreviewBytes.value = null
-            return
-        }
-        exportLoading.value = true
-
-        try {
-            const { sizeBytes } = (await dropRef.value.estimateExport({format: lastExportFormat.value || 'png'})) || {}
-            exportPreviewBytes.value = sizeBytes ?? null
-        } finally {
-            exportLoading.value = false
-        }
-    }
-
-    function scheduleExportRecalc(delay = 200) {
-        clearTimeout(exportTimer)
-        exportTimer = setTimeout(recalcExportPreview, delay)
-    }
-
-    onUnmounted(() => clearTimeout(exportTimer))
-
-    async function onExport({ name, format }) {
-        const finalFormat = format || lastExportFormat.value || 'png'
-
-        const res = await dropRef.value?.estimateExport({ format: finalFormat })
-        if (!res?.blob) return
-
-        recordAction('export', {
-            format: finalFormat,
-            bytes: res?.sizeBytes ?? res?.blob?.size ?? null
-        })
-
-        if (!analytics.hasActive?.()) analytics.startSession()
-
-        const ext = res.ext || finalFormat || 'png'
-        const a = document.createElement('a')
-        a.href = URL.createObjectURL(res.blob)
-        a.download = `${(name || 'export').trim()}.${ext}`
-        a.click()
-        URL.revokeObjectURL(a.href)
-
-        analytics.endSession({
-            actions: actionsPerformed.value
-        })
-
-        actionsPerformed.value = []
-    }
-
-    function onPreviewGrayscale(opts) {
-        dropRef.value?.previewGrayscale(opts)
-    }
-
-    function onEndPreviewGrayscale() {
-        dropRef.value?.endPreviewGrayscale()
-    }
-    
-    function onPreviewBgColor(hex) {
-        dropRef.value?.previewBackgroundColor(hex)
-    }
-
-    function onEndPreviewBgColor() {
-        dropRef.value?.endPreviewBackgroundColor()
-    }
-
-    function onRemoveBackground() {
-        editingNow.value = true
-        dropRef.value?.removeBackground?.()
-        lastBgColor.value = null
-        scheduleExportRecalc(120)
-        recordAction('remove_background')
-    }
-
-    function onBgColorUpdate(hex) {
-        if (hex === null) {
-            bgColor.value = '#ffffff'
-            isTransparent.value = true
-        } else {
-            bgColor.value = hex
-            isTransparent.value = false
-        }
-
-        if (!editingNow.value) {
-            lastBgColor.value = null
-        }
-        scheduleExportRecalc()
-    }
-
-    function onApplyGrayscale(opts) {
-        editingNow.value = true
-        dropRef.value?.endPreviewGrayscale()
-        dropRef.value?.applyGrayscale(opts)
-        lastGrayscaleStrength.value = opts?.strength ?? null
-        recordAction('grayscale_apply', opts || {})
-    }
-
-    function onHighlightArtifacts(color = '#00E5FF') {
-        const params = { diffThresh: 1, lowEdge: 40, highEdge: 160, dilate: 0 }
-        dropRef.value?.highlightJpegArtifacts(color, params)
-        recordAction('highlight_artifacts')
-    }
-
-    function onApplyBgColor(color) {
-        editingNow.value = true
-        dropRef.value?.endPreviewBackgroundColor()
-        dropRef.value?.setBackgroundColor(color)
-        lastBgColor.value = color
-        scheduleExportRecalc(120)
-        recordAction('bgcolor_apply', { color })
-    }
-
-    function onMetaUpdate(meta) {
+    function metaUpdate(meta) {
         imageMeta.value = meta
         cropWidth.value = meta?.width || 0
         cropHeight.value = meta?.height || 0
 
-        const sig = meta?.docSig || `${meta?.name}|${meta?.size}|${meta?.lastModified}`
-        const isNewDoc = sig !== sourceSig.value && !editingNow.value
+        const fileId = meta?.docSig || `${meta?.name}|${meta?.size}|${meta?.lastModified}`
+        const isNewFile = fileId !== lastFileId.value && !isEditing.value
 
-        if (isNewDoc) {
-            if (!analytics.hasActive?.()) analytics.startSession()
+        if (isNewFile) {
+            if (!analytics.hasActive?.()) {
+                analytics.startSession()
+            }
+
             exportName.value = meta?.name || 'export'
             exportType.value = meta?.type || ''
-            const fmt = inferFormat(meta)
-            lastExportFormat.value = fmt
-            analytics.setSourceFormat?.(fmt)
+            const fileFormat = detectFileFormat(meta)
+            lastExportFormat.value = fileFormat
+            analytics.setSourceFormat?.(fileFormat)
 
             initialDoc.value = {
                 name: meta?.name, type: meta?.type, size: meta?.size,
@@ -374,83 +207,194 @@
             activeTool.value = null
         }
 
-        if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastDocSig.value && !meta.noGallery) {
-            const sg = meta.docSig || `${meta.name}|${meta.size}|${meta.lastModified}`
-            if (sg !== lastDocSig.value) {
-            lastDocSig.value = sg
-            totalPages.value = meta.pages
-            pickPage.value = meta.page || 1
-            showPageDlg.value = true
+        if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastPdfFileId.value && !meta.noGallery) {
+            const pdfFileId = meta.docSig || `${meta.name}|${meta.size}|${meta.lastModified}`
+            if (pdfFileId !== lastPdfFileId.value) {
+                lastPdfFileId.value = pdfFileId
+                totalPages.value = meta.pages
+                pickPage.value = meta.page || 1
+                showPageDlg.value = true
             }
         }
 
         if (meta) {
-            dropRef.value.showOverlay(meta.width, meta.height)
+            imageArea.value.showOverlay(meta.width, meta.height)
         }
 
-        sourceSig.value = sig
-        editingNow.value = false
-        scheduleExportRecalc(80)
+        lastFileId.value = fileId
+        isEditing.value = false
+        exportSizeDelay(80)
     }
 
-    function onOverlayUpdate({ width, height }) {
-        cropWidth.value = width
-        cropHeight.value = height
-        scheduleExportRecalc(250)
-    }
-
-    function onCropToContent() {
-        dropRef.value?.previewCropToContent()
-        recordAction('crop_to_content')
-    }
-
-    function onConfirmPage(n) {
-        dropRef.value?.setPdfPage(n)
+    function confirmPage(n) {
+        imageArea.value?.setPdfPage(n)
         showPageDlg.value = false
         recordAction('pdf_page_selected')
     }
 
     function onDownload() {
-        dropRef.value?.download()
+        imageArea.value?.download()
     }
 
     function onClear() {
-        dropRef.value?.clear()
+        imageArea.value?.clear()
         imagePreview.value = null
         imageMeta.value = null
         cropWidth.value = 0
         cropHeight.value = 0
-        lastDocSig.value = null
-        exportPreviewBytes.value = null
+        lastPdfFileId.value = null
+        exportBytes.value = null
         exportLoading.value = false
         lastExportFormat.value = 'png'
         exportName.value = null
         exportType.value = null
-        sourceSig.value = null
+        lastFileId.value = null
         showScale.value = false
         lastGrayscaleStrength.value = null
         lastBgColor.value = null
         activeTool.value = null
     }
 
-    function onSetActiveTool(toolName) {
-        const isPdf = imageMeta.value?.type === 'application/pdf'
-        if (isPdf && (toolName === 'blur' || toolName === 'mark')) {
-            activeTool.value = null
-            window.alert('This tool currently works only for images (not PDFs).')
-            return
-        }
-        activeTool.value = toolName
+    // --- History ---
+
+    function onUndo() {
+        imageArea.value?.undo?.()
+        lastGrayscaleStrength.value = null
+        lastBgColor.value = null
+        activeTool.value = null
     }
 
-    function onBlurStroke(data) {
+    function onRedo() {
+        imageArea.value?.redo?.()
+    }
+
+    function onReset() {
+        imageArea.value?.resetToOriginal?.()
+        lastGrayscaleStrength.value = null
+        lastBgColor.value = null
+        activeTool.value = null
+    }
+
+    // --- Crop ---
+
+    function setCropVisible(visible) {
+        imageArea.value?.setOverlayVisible?.(visible)
+    }
+
+    function overlayUpdate({ width, height }) {
+        cropWidth.value = width
+        cropHeight.value = height
+        exportSizeDelay(250)
+    }
+
+    function cropToContent() {
+        imageArea.value?.previewCropToContent()
+        recordAction('crop_to_content')
+    }
+
+    function previewCrop(size) {
+        cropWidth.value = size.width
+        cropHeight.value = size.height
+        imageArea.value?.showOverlay(size.width, size.height)
+    }
+
+    function applyCrop() {
+        isEditing.value = true
+        imageArea.value?.cropToOverlay()
+        recordAction('crop_apply', { width: cropWidth.value, height: cropHeight.value })
+    }
+
+    // --- Background Color ---
+
+    function backgroundColorUpdate(hex) {
+        if (hex === null) {
+            bgColor.value = '#ffffff'
+            isTransparent.value = true
+        } else {
+            bgColor.value = hex
+            isTransparent.value = false
+        }
+
+        if (!isEditing.value) {
+            lastBgColor.value = null
+        }
+        exportSizeDelay()
+    }
+
+    function previewBgColor(hex) {
+        imageArea.value?.previewBackgroundColor(hex)
+    }
+
+    function endPreviewBgColor() {
+        imageArea.value?.endPreviewBackgroundColor()
+    }
+
+    function applyBackgroundColor(color) {
+        isEditing.value = true
+        imageArea.value?.endPreviewBackgroundColor()
+        imageArea.value?.setBackgroundColor(color)
+        lastBgColor.value = color
+        exportSizeDelay(120)
+        recordAction('bgcolor_apply', { color })
+    }
+
+    function removeBackground() {
+        isEditing.value = true
+        imageArea.value?.removeBackground?.()
+        lastBgColor.value = null
+        exportSizeDelay(120)
+        recordAction('remove_background')
+    }
+
+    // --- Grayscale ---
+
+    function previewGrayscale(opts) {
+        imageArea.value?.previewGrayscale(opts)
+    }
+
+    function endPreviewGrayscale() {
+        imageArea.value?.endPreviewGrayscale()
+    }
+
+    function applyGrayscale(opts) {
+        isEditing.value = true
+        imageArea.value?.endPreviewGrayscale()
+        imageArea.value?.applyGrayscale(opts)
+        lastGrayscaleStrength.value = opts?.strength ?? null
+        recordAction('grayscale_apply', opts || {})
+    }
+
+    // --- JPEG Artifacts ---
+
+    function highlightArtifacts(color = '#00E5FF') {
+        const artifactsParameters = { diffThresh: 1, lowEdge: 40, highEdge: 160, gradLimit: 120 }
+
+        imageArea.value?.highlightJpegArtifacts(color, artifactsParameters)
+        recordAction('highlight_artifacts')
+    }
+
+    function fixArtifacts() {
+        isEditing.value = true
+        imageArea.value?.fixJpegArtifacts()
+        recordAction('fix_jpeg_artifacts')
+    }
+
+    // --- Blur Tool ---
+
+    function blurStroke(data) {
         recordAction('blur_stroke', {
             radius: data.radius,
             intensity: data.intensity
         })
     }
 
-    function onMarkShape(data) {
+    // --- Mark Tool ---
+
+    function setActiveTool(toolName) {
+        activeTool.value = toolName
+    }
+
+    function markShapeDraw(data) {
         recordAction('mark_shape', {
             thickness: data.thickness,
             color: data.color,
@@ -460,25 +404,9 @@
         })
     }
 
-    function onFixArtifacts() {
-        editingNow.value = true
-        dropRef.value?.fixJpegArtifacts()
-        recordAction('fix_jpeg_artifacts')
-    }
+    // --- Scale / Zoom / Calibration ---
 
-    function onPreviewCrop(size) {
-        cropWidth.value = size.width
-        cropHeight.value = size.height
-        dropRef.value?.showOverlay(size.width, size.height)
-    }
-
-    function onApplyCrop() {
-        editingNow.value = true
-        dropRef.value?.cropToOverlay()
-        recordAction('crop_apply', { width: cropWidth.value, height: cropHeight.value })
-    }
-
-    function onScaleUpdateFromDrop({ displayScale: newScale, referenceWidthMm: refWidth, minDisplayScale, maxDisplayScale }) {
+    function updateScaleInfo({ displayScale: newScale, referenceWidthMm: refWidth, minDisplayScale, maxDisplayScale }) {
         displayScale.value = newScale
         referenceWidthMm.value = refWidth
 
@@ -487,20 +415,136 @@
             maxScale.value = Math.max(minScale.value, maxDisplayScale)
         }
 
-        if (imageMeta.value) showScale.value = true
+        if (imageMeta.value) {
+            showScale.value = true
+        }
     }
 
-    function onScaleUpdate(newScale) {
-        dropRef.value?.setDisplayScale?.(newScale)
+    function scaleUpdate(newScale) {
+        imageArea.value?.setDisplayScale?.(newScale)
     }
 
-    function onReferenceWidthUpdate(newWidthMm) {
-        dropRef.value?.setReferenceWidth?.(newWidthMm)
+    function referenceWidthUpdate(newWidthMm) {
+        imageArea.value?.setReferenceWidth?.(newWidthMm)
     }
 
     async function onResetTo100() {
-        await dropRef.value?.resetZoomTo100?.()
+        await imageArea.value?.resetZoomTo100?.()
     }
+
+    async function openCalibration() {
+        try {
+            const dpi = await imageArea.value?.openCalibration?.()
+            calibrationDpi.value = dpi || 96
+            recordAction('calibration')
+        } catch (e) {
+            calibrationDpi.value = 96
+            recordAction('calibration')
+        }
+    }
+
+    function clearCalibration() {
+        calibrationDpi.value = null
+        imageArea.value?.clearCalibration?.()
+        recordAction('calibration_cleared')
+    }
+
+    // --- Export ---
+
+    async function updateExportSize({ format }) {
+        if (format && format !== lastExportFormat.value) {
+            analytics.setExportFormat?.(format)
+            lastExportFormat.value = format
+        }
+
+        exportLoading.value = true
+
+        try {
+            const exportResult = await imageArea.value?.prepareExport({ format: lastExportFormat.value })
+            exportBytes.value = exportResult?.sizeBytes ?? null
+        } finally {
+            exportLoading.value = false
+        }
+    }
+
+    async function refreshExportSize() {
+        if (!imageArea.value) {
+            exportBytes.value = null
+            return
+        }
+
+        exportLoading.value = true
+
+        try {
+            const { sizeBytes } = (await imageArea.value.prepareExport({format: lastExportFormat.value || 'png'})) || {}
+            exportBytes.value = sizeBytes ?? null
+        } finally {
+            exportLoading.value = false
+        }
+    }
+
+    function exportSizeDelay(delay = 200) {
+        clearTimeout(exportTimer)
+        exportTimer = setTimeout(refreshExportSize, delay)
+    }
+
+    async function exportFile({ name, format }) {
+        const targetFormat = format || lastExportFormat.value || 'png'
+        const exportResult = await imageArea.value?.prepareExport({ format: targetFormat })
+
+        if (!exportResult?.blob) {
+            return
+        }
+
+        recordAction('export', {
+            format: targetFormat,
+            bytes: exportResult?.sizeBytes ?? exportResult?.blob?.size ?? null
+        })
+
+        if (!analytics.hasActive?.()) {
+            analytics.startSession()
+        }
+
+        const fileExtension = exportResult.fileExtension || targetFormat || 'png'
+        const a = document.createElement('a')
+        a.href = URL.createObjectURL(exportResult.blob)
+        a.download = `${(name || 'export').trim()}.${fileExtension}`
+        a.click()
+
+        URL.revokeObjectURL(a.href)
+        analytics.endSession({ actions: actionsPerformed.value })
+        actionsPerformed.value = []
+    }
+
+    // --- Lifecycle ---
+
+    onMounted(async () => {
+        const file = consumePendingFile()
+
+        if (!file) {
+            return
+        }
+
+        await nextTick()
+        if (imageArea.value?.loadExternalFile) {
+            await imageArea.value.loadExternalFile(file)
+        }
+    })
+
+    onMounted(() => {
+        if (typeof window === 'undefined') {
+            return
+        }
+
+        analytics.bindUnloadOnce?.()
+        const saved = parseFloat(localStorage.getItem('imageDrop.cssBaseDpi'))
+
+        if (Number.isFinite(saved) && saved > 20 && saved < 2000) {
+            calibrationDpi.value = saved
+        }
+    })
+
+    onUnmounted(() => clearTimeout(exportTimer))
 </script>
 
 <style>

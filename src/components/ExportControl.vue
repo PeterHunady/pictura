@@ -43,7 +43,7 @@
             <div class="hint ty-body-medium">
               <span>Estimated size:</span>
               <strong v-if="loading">…</strong>
-              <strong v-else>{{ prettySize }}</strong>
+              <strong v-else>{{ fileSizeText }}</strong>
             </div>
 
             <button
@@ -78,76 +78,65 @@
   const name = ref('')
   const format = ref('png')
 
-  function baseName(n) {
-    if(!n) {
+  const fileSizeText = computed(() => {
+    const bytes = props.sizeHint
+    if (bytes == null) {
+      return '—'
+    }
+
+    const kb = bytes / 1024
+    return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb/1024).toFixed(2)} MB`
+  })
+
+  function baseName(fileName) {
+    if(!fileName) {
       return 'export'
     }
 
-    const i = n.lastIndexOf('.')
-    return i > 0 ? n.slice(0,i) : n 
+    const dotIndex = fileName.lastIndexOf('.')
+    return dotIndex > 0 ? fileName.slice(0,dotIndex) : fileName
   }
 
-  function inferFormat(s = '') {
-    s = s.toLowerCase()
-    if (s.includes('pdf')) {
+  function detectFileFormat(fileInfo = '') {
+    fileInfo = fileInfo.toLowerCase()
+    if (fileInfo.includes('pdf')) {
       return 'pdf'
     }
 
-    if (s.includes('jpeg') || s.includes('jpg')){
+    if (fileInfo.includes('jpeg') || fileInfo.includes('jpg')){
       return 'jpg'
     }
 
-    if (s.includes('png')) {
+    if (fileInfo.includes('png')) {
       return 'png'
     }
 
-    const m = s.match(/\.([a-z0-9]+)$/)
-    const ext = m?.[1]
+    const suffixMatch = fileInfo.match(/\.([a-z0-9]+)$/)
+    const suffix = suffixMatch?.[1]
     
-    if (ext==='pdf') {
+    if (suffix==='pdf') {
       return 'pdf'
     }
 
-    if (ext==='jpg' || ext==='jpeg') {
+    if (suffix==='jpg' || suffix==='jpeg') {
       return 'jpg'
     }
 
-    if (ext==='png') {
+    if (suffix==='png') {
       return 'png'
     }
 
     return 'png'
   }
 
-  function applySuggested(){
+  function setExportInfo(){
     name.value = baseName(props.suggestedName || 'export')
-    format.value = inferFormat(props.suggestedType || props.suggestedName)
+    format.value = detectFileFormat(props.suggestedType || props.suggestedName)
   }
-
-  applySuggested()
-  watch(() => [props.suggestedName, props.suggestedType], applySuggested)
-
-  let t = null
-  watch([name, format], ([n,f]) => {
-    clearTimeout(t)
-    t = setTimeout(() => emit('request-preview', { name: n, format: f }), 150)
-  }, { immediate: true })
-
-  onBeforeUnmount(() => clearTimeout(t))
 
   function onSave(){
     emit('export', { name: name.value, format: format.value })
   }
-
-  const prettySize = computed(() => {
-    const b = props.sizeHint
-    if (b == null) {
-      return '—'
-    }
-
-    const kb = b / 1024
-    return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb/1024).toFixed(2)} MB`
-  })
 
   const onEnter = (el) => {
     el.style.height = '0px'
@@ -176,6 +165,17 @@
     el.style.height = '0px'
     el.style.opacity = '0'
   }
+
+  setExportInfo()
+  watch(() => [props.suggestedName, props.suggestedType], setExportInfo)
+
+  let exportSizeTimer = null
+  watch([name, format], ([fileName, fileFormat]) => {
+    clearTimeout(exportSizeTimer)
+    exportSizeTimer = setTimeout(() => emit('request-preview', { name: fileName, format: fileFormat }), 150)
+  }, { immediate: true })
+
+  onBeforeUnmount(() => clearTimeout(exportSizeTimer))
 </script>
 
 <style scoped>

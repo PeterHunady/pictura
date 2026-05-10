@@ -1,11 +1,11 @@
 <template>
-  <div :class="['sidebar-wrapper bg-neutral100', { collapsed }]" :style="sidebarStyle">
-    <button class="toggle-btn bg-neutral100" @click="collapsed = !collapsed">
-      <span :class="collapsed ? 'arrow-left' : 'arrow-right'"></span>
+  <div :class="['sidebar-wrapper bg-neutral100', { sidebarClosed }]" :style="sidebarStyle">
+    <button class="toggle-btn bg-neutral100" @click="sidebarClosed = !sidebarClosed">
+      <span :class="sidebarClosed ? 'arrow-left' : 'arrow-right'"></span>
     </button>
 
-    <div class="sidebar-inner bg-neutral100" v-show="!collapsed">
-      <div class="content bg-neutral100" ref="contentRef">
+    <div class="sidebar-inner bg-neutral100" v-show="!sidebarClosed">
+      <div class="content bg-neutral100" ref="sidebarContent">
       <Metadata
         :meta="meta"
         :isOpen="openTool === 'metadata'"
@@ -136,43 +136,22 @@
     appliedBgColor: { type: String, default: null }
   })
 
-
   const emit = defineEmits([
-    'update:modelValue',
-    'download','clear','crop','preview-crop','resize-crop',
+    'update:modelValue', 'download','clear','crop','preview-crop','resize-crop',
     'fix-artifacts','apply-color','highlight-artifacts','apply-grayscale',
     'preview-grayscale','end-preview-grayscale',
-    'preview-color','end-preview-color', 'export', 'request-export-preview', 'remove-background'
-    ,'set-active-tool','update-blur-radius','update-blur-intensity'
-    ,'update-mark-thickness','update-mark-color','update-mark-shape'
+    'preview-color','end-preview-color', 'export', 'request-export-preview', 'remove-background',
+    'set-active-tool','update-blur-radius','update-blur-intensity',
+    'update-mark-thickness','update-mark-color','update-mark-shape'
   ])
 
   const sidebarStyle = computed(() => {
     const top = (props.topGap && String(props.topGap).trim()) ? props.topGap : '0px'
-    return {
-      top,
-      height: `calc(100vh - ${top})`
-    }
+    return { top, height: `calc(100vh - ${top})`}
   })
 
-  const collapsed = ref(props.modelValue)
-  watch(() => props.modelValue, v => (collapsed.value = v))
-  watch(collapsed, v => {
-    emit('update:modelValue', v)
-
-    if (v) {
-      openTool.value = null
-      emit('set-active-tool', null)
-    }
-  })
-  watch(() => props.meta, m => { if (!m && window.innerWidth < 768) collapsed.value = true })
-
+  const sidebarClosed = ref(props.modelValue)
   const openTool = ref(null)
-
-  watch(() => props.activeTool, (t) => {
-    if (openTool.value === 'blur' && t !== 'blur') openTool.value = null
-    if (openTool.value === 'mark' && t !== 'mark') openTool.value = null
-  })
 
   const toggleTool = (toolName) => {
     if (openTool.value === toolName) {
@@ -185,13 +164,16 @@
     emit('set-active-tool', isLiveTool ? openTool.value : null)
   }
 
-  const contentRef = ref(null)
+  const sidebarContent = ref(null)
   const isAtBottom = ref(false)
   const showScrollArrow = ref(false)
 
   const handleScroll = () => {
-    const el = contentRef.value
-    if (!el) return
+    const el = sidebarContent.value
+    if (!el) {
+      return
+    }
+
     const threshold = 10
     const { scrollTop, scrollHeight, clientHeight } = el
     isAtBottom.value = scrollTop + clientHeight >= scrollHeight - threshold
@@ -199,8 +181,11 @@
   }
 
   const scrollAction = () => {
-    const el = contentRef.value
-    if (!el) return
+    const el = sidebarContent.value
+    if (!el) {
+      return
+    }
+
     if (isAtBottom.value) {
       el.scrollTo({ top: 0, behavior: 'smooth' })
     } else {
@@ -211,35 +196,61 @@
   let resizeObserver = null
   let mutationObserver = null
 
+  watch(() => props.modelValue, v => (sidebarClosed.value = v))
+
+  watch(sidebarClosed, v => {
+    emit('update:modelValue', v)
+
+    if (v) {
+      openTool.value = null
+      emit('set-active-tool', null)
+    }
+  })
+
+  watch(() => props.meta, meta => { if (!meta && window.innerWidth < 768) sidebarClosed.value = true })
+
+  watch(() => props.activeTool, (tool) => {
+    if (openTool.value === 'blur' && tool !== 'blur') { 
+      openTool.value = null
+    }
+
+    if (openTool.value === 'mark' && tool !== 'mark') {
+      openTool.value = null
+    }  
+  })
+
   onMounted(() => {
-    const el = contentRef.value
-    if (!el) return
+    const el = sidebarContent.value
+    if (!el) {
+      return
+    }
 
     const update = () => nextTick(() => handleScroll())
-
     handleScroll()
     el.addEventListener('scroll', handleScroll)
     window.addEventListener('resize', handleScroll)
 
     resizeObserver = new ResizeObserver(update)
     resizeObserver.observe(el)
-
     mutationObserver = new MutationObserver(update)
     mutationObserver.observe(el, { childList: true, subtree: true, attributes: true })
 
-    watch( () => props.meta,
-      () => nextTick(() => handleScroll()),
-      { deep: true }
-    )
+    watch(() => props.meta, () => nextTick(() => handleScroll()), { deep: true })
   })
 
   onBeforeUnmount(() => {
-    const el = contentRef.value
-    if (el) el.removeEventListener('scroll', handleScroll)
+    const el = sidebarContent.value
+    if (el) {
+      el.removeEventListener('scroll', handleScroll)
+    }
     window.removeEventListener('resize', handleScroll)
   
-    if (resizeObserver) resizeObserver.disconnect()
-    if (mutationObserver) mutationObserver.disconnect()
+    if (resizeObserver) {
+      resizeObserver.disconnect()
+    }
+    if (mutationObserver) {
+      mutationObserver.disconnect()
+    }
   })
 
 </script>
@@ -257,7 +268,7 @@
     overflow: visible;
   }
 
-  .sidebar-wrapper.collapsed {
+  .sidebar-wrapper.sidebarClosed {
     transform: translateX(calc(100% - 30px));
   }
 
