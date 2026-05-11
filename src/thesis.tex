@@ -1,0 +1,1052 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Úvod}
+\label{uvod}
+
+Cieľom tejto práce je navrhnúť a~implementovať webovú aplikáciu určenú na rýchlu úpravu rastrových obrázkov a~PDF dokumentov pri príprave bakalárskych a~diplomových prác. Hlavným cieľom je poskytnúť jednoduchý nástroj, ktorý pokryje najčastejšie úpravy potrebné pri práci s~obrázkami a~dokumentmi vloženými do textu, bez nutnosti inštalácie externého softvéru. V~praxi ide najmä o~situácie, keď študent potrebuje pripraviť obrázky do jednotnej podoby, napríklad odstrániť okraje, zmeniť farbu pozadia, previesť obrázok do odtieňov sivej alebo zakryť citlivé údaje v~dokumentoch a~snímkach obrazovky. Dôležitá je pritom aj rýchlosť a~jednoduchosť, keďže tieto úpravy sa často opakujú pri finalizácii textu. Existujúce nástroje sú v~takýchto prípadoch často zbytočne zdĺhavé, nejednotné alebo príliš komplikované vzhľadom na rozsah úprav, ktoré sú reálne potrebné.
+
+Aplikácia umožňuje ručné orezávanie a~automatické orezávanie podľa obsahu, zmenu farby pozadia aj odstránenie pozadia, prevod do odtieňov sivej s~nastaviteľnou intenzitou, export do viacerých formátov a~nástroje na označovanie a~rozmazanie citlivých údajov. Aplikácia podporuje aj PDF súbory, vrátane viacstranových dokumentov, pričom používateľ si vie zvoliť stranu, ktorú chce upravovať. Súčasťou riešenia je aj detekcia a~následné potlačenie JPEG artefaktov, ktoré sa objavujú najmä pri silne komprimovaných obrázkoch. Aplikácia ďalej obsahuje kalibráciu zobrazenia pre prácu so~skutočnou mierkou, čo je užitočné najmä pri obrázkoch, kde je potrebné udržať približnú veľkosť v~texte. Okrem samotných úprav je súčasťou riešenia aj anonymizovaný zber udalostí používania, z~ktorých je možné vytvoriť základné štatistiky využívania nástrojov. Tieto štatistiky slúžia na vyhodnotenie toho, ktoré funkcie sú využívané najviac a~ako vyzerá typický priebeh práce s~aplikáciou.
+
+Výsledkom práce je single-page webová aplikácia implementovaná vo~frameworku Vue~3. Verejná verzia je dostupná na adrese \url{https://peterhunady.github.io/pictura/} a~je nasadená cez GitHub pages. Úpravy rastrových obrázkov sú realizované priamo v~prehliadači pomocou HTML5 Canvas API, čo umožňuje spracovanie bez potreby externého softvéru. Pri práci s~PDF dokumentmi sa využíva rasterizácia vybranej strany do podoby rastrového náhľadu, aby bolo možné nad dokumentom použiť rovnaké editačné nástroje ako pri bežných obrázkoch. Aplikácia je navrhnutá tak, aby bola jednoducho nasaditeľná na statickom hostingu a~aby bolo možné anonymne vyhodnocovať používanie jej nástrojov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Webové technológie a~spracovanie digitálneho obrazu}
+\label{chap_teoria}
+
+Táto kapitola opisuje technológie a~základné princípy digitálneho spracovania obrazu, ktoré sú potrebné pre návrh a~implementáciu aplikácie. Najprv sú predstavené frontendové technológie a~spracovanie obrazových dát v~prehliadači. Následne sú popísané princípy, ktoré aplikácia využíva pri jednotlivých úpravách, najmä JPEG kompresia a~obrazové artefakty, obrazové masky, prevod do odtieňov sivej, vyhladzovanie, bilaterálny filter a~detekcia hrán. Záver kapitoly sa venuje PDF dokumentom a~rasterizácii, keďže aplikácia s~PDF pracuje cez ich obrazovú podobu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Architektúra a~technológie klienta}
+\label{sec:frontend_technologies}
+
+Vue.js~\cite{vuejs} je frontendový framework určený na tvorbu používateľských rozhraní. Je založený na deklaratívnom vykresľovaní, pri ktorom sa výsledné zobrazenie odvodzuje od dátového stavu aplikácie. Súčasťou frameworku je aj reaktivita, vďaka ktorej sa zmeny dát premietajú do používateľského rozhrania bez manuálnej úpravy jednotlivých prvkov stránky. Vue zároveň podporuje komponentový prístup, pri ktorom sa rozhranie skladá z~menších samostatných častí.
+
+Vue Router~\cite{vuerouter} je smerovacia knižnica pre aplikácie postavené nad Vue.js. Umožňuje klientské smerovanie, pri ktorom sa adresa v~prehliadači prepája s~aktuálne zobrazenou časťou aplikácie. Tento princíp sa používa pri single-page aplikáciách, kde sa po prvom načítaní stránky ďalšia navigácia rieši na strane klienta.
+
+Vite~\cite{vite} je nástroj určený na vývoj a~zostavenie frontendových aplikácií. Počas vývoja poskytuje vývojový server a~pri produkčnej zostave pripravuje výsledné súbory aplikácie. Výstupom sú statické súbory, najmä HTML, CSS a~JavaScript, ktoré možno nasadiť na statický hosting.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Spracovanie obrazových dát v~prehliadači}
+\label{sec:browser_image_processing}
+
+Prvok \texttt{canvas}~\cite{whatwgcanvas} predstavuje bitmapové plátno, s~ktorým možno pracovať pomocou skriptov v~prehliadači. Pre obrazové úpravy je dôležité najmä to, že Canvas API~\cite{mdncanvas} umožňuje obrázok vykresliť, načítať jeho obrazové dáta a~upravené pixely zapísať späť. Obrazové dáta sú dostupné cez objekt \texttt{ImageData}, ktorého pole \texttt{data} obsahuje hodnoty jednotlivých pixelov v~poradí RGBA~\cite{mdnimagedata}. Vďaka tomu možno nad rastrovým obrázkom vykonávať úpravy priamo na úrovni pixelov.
+
+PDF.js~\cite{pdfjsexamples} je knižnica, ktorú možno použiť v~prehliadači na prácu s~PDF dokumentmi. Umožňuje načítať PDF dokument, získať z~neho konkrétnu stranu a~vykresliť ju do prvku \texttt{canvas}. Keďže sa pri vykreslení pracuje s~rozmermi v~pixeloch a~s~kontextom plátna, takto zobrazenú stranu možno ďalej spracovať podobne ako bežný rastrový obrázok.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{JPEG kompresia a~obrazové artefakty}
+\label{sec:jpeg_artifacts}
+
+JPEG kompresia~\cite{wallace} je stratová metóda kompresie obrazu určená najmä pre fotografie a~obrázky s~plynulými farebnými prechodmi. Pri základnom postupe sa obraz spracúva po blokoch veľkosti \(8\times8\) pixelov. Na každý blok sa aplikuje diskrétna kosínusová transformácia, skrátene DCT, ktorá prevedie obrazové hodnoty z~priestorovej oblasti do frekvenčnej oblasti. Namiesto priamych hodnôt pixelov sa tak ďalej pracuje s~koeficientmi, ktoré opisujú pomalšie aj rýchlejšie zmeny v~danom bloku. Kvantizácia~\cite{wallace} je dôležitý stratový krok JPEG kompresie. Pri nej sa transformačné koeficienty upravia tak, aby sa časť menej dôležitých informácií odstránila alebo zjednodušila. Tým sa zmenší veľkosť výsledného súboru, ale pôvodný obraz už nie je možné obnoviť úplne presne. Pri silnejšej kompresii sa preto môžu objaviť viditeľné chyby v~obraze. Dôsledok silnejšej JPEG kompresie je znázornený na obrázku~\ref{fig:jpeg_artifacts_example}, kde je porovnaná pôvodná fotografia s~verziou uloženou s~nižšou kvalitou kompresie.
+
+Blokové artefakty~\cite{wangblocking} vznikajú preto, že pri blokovom transformačnom kódovaní sa obraz spracúva po samostatných blokoch. Pri vyššej kompresii sa môžu medzi susednými blokmi objaviť viditeľné hranice. Tieto prejavy sú typickým dôsledkom stratového blokového kódovania a~kvantizácie.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.495\textwidth]{obrazky-figures/colosseum_original.jpeg}
+    \hfill
+    \includegraphics[width=0.495\textwidth]{obrazky-figures/colosseum_artefacts.jpg}
+    \caption{Porovnanie pôvodnej fotografie a~verzie so~silnejšími prejavmi JPEG kompresie. Na komprimovanej verzii je viditeľná najmä strata detailov, narušenie plynulých prechodov v~oblohe a~rušivé zmeny v~okolí hrán.}
+    \label{fig:jpeg_artifacts_example}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Farebná vzdialenosť a~obrazové masky}
+\label{sec:color_masks}
+
+Pri oddeľovaní pozadia od zvyšku obrazu sa často vytvára maska, ktorá určuje, ktoré pixely budú považované za súčasť pozadia. Pri technikách založených na jednofarebnom pozadí~\cite{afifi} sa maska môže vytvárať porovnaním farby pixelu s~referenčnou farbou pozadia. Jednou z~možností je použiť euklidovskú vzdialenosť, ktorá vyjadruje rozdiel medzi farbou pixelu a~referenčnou farbou. Ak je tento rozdiel menší než zvolený prah, pixel sa môže považovať za súčasť danej farebnej oblasti.
+
+Samotná podobnosť farby však nemusí stačiť. Podobnú farbu ako pozadie môžu mať aj časti objektu vo~vnútri obrazu, preto je pri tvorbe masky vhodné zohľadniť aj spojitosť označenej oblasti. Tento princíp súvisí s~metódami rastu oblasti~\cite{adams}, pri ktorých sa začne z~počiatočných bodov a~oblasť sa postupne rozširuje o~susedné pixely spĺňajúce zvolenú podmienku podobnosti. Výsledná maska potom nezohľadňuje iba podobnosť farby, ale aj to, či označené pixely tvoria spojitú oblasť.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Prevod do odtieňov sivej}
+\label{sec:grayscale}
+
+Prevod farebného obrazu do odtieňov sivej~\cite{macedo} znižuje farebnú informáciu pixelu na jednu jasovú hodnotu. Výsledkom je monochromatický obraz, ktorý už neobsahuje pôvodné farby, ale zachováva rozdiely medzi svetlými a~tmavými časťami obrazu. Pri takomto prevode sa často používajú metódy založené na váženom priemere červeného, zeleného a~modrého kanála. Rôzne postupy prevodu však môžu viesť k~odlišným výsledkom, pretože závisia od zvolených váh jednotlivých farebných zložiek.
+
+Jedným z~takýchto postupov je výpočet jasovej zložky podľa odporúčania ITU-R BT.601, kde sa používajú koeficienty \(0.299\), \(0.587\) a~\(0.114\)~\cite{bt601}. Pre jeden pixel s~farebnými zložkami \(R\), \(G\) a~\(B\) možno jas vypočítať ako
+\begin{equation}
+    Y = 0.299\,R + 0.587\,G + 0.114\,B.
+\end{equation}
+Hodnota \(Y\) sa následne použije pre všetky tri farebné zložky výsledného pixelu. Pixel v~odtieňoch sivej má teda hodnotu \((Y,Y,Y)\).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Vyhladzovanie obrazu}
+\label{sec:filter_blur}
+
+Vyhladzovanie obrazu patrí medzi operácie~\cite{hiprmean}, pri ktorých sa hodnota pixelu určuje aj z~hodnôt pixelov v~jeho okolí. Potlačenie jemných detailov a~hrán je pri takomto spracovaní bežným dôsledkom, pretože sa znižujú lokálne rozdiely medzi susednými pixelmi a~obraz pôsobí hladšie. Vyhladzovanie sa dá použiť pri rozmazaní vybranej časti obrazu, ale aj pri potlačení drobných rušivých zmien v~obraze.
+
+Jedným z~bežných spôsobov vyhladzovania je Gaussovské rozmazanie~\cite{hiprgaussian}, pri ktorom nemajú všetky pixely v~okolí rovnakú váhu. Väčší vplyv majú pixely bližšie k~spracovávanému pixelu a~vplyv vzdialenejších pixelov postupne klesá. Miera vyhladenia závisí od parametra Gaussovského filtra. Keďže takéto vyhladzovanie môže rozmazávať aj hrany, pri niektorých úlohách je vhodnejšie použiť filtre, ktoré sa snažia hrany zachovať. Príkladom je bilaterálny filter, ktorý je popísaný v~nasledujúcej časti.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Bilaterálny filter}
+\label{sec:bilateral}
+
+Bilaterálny filter~\cite{tomasi} je vyhladzovací filter, ktorý sa používa na potlačenie drobných rušivých zmien v~obraze pri lepšom zachovaní hrán. Na rozdiel od bežného Gaussovského vyhladzovania nezohľadňuje iba to, ako ďaleko sú pixely od seba v~obraze, ale aj to, ako podobné sú ich jasové alebo farebné hodnoty. Pixel z~rovnakej alebo podobnej oblasti má pri výpočte väčší vplyv. Pixel z~opačnej strany výraznej hrany má menší vplyv, aj keď sa nachádza blízko. Vďaka tomu sa pri filtrovaní menej miešajú hodnoty z~rôznych oblastí obrazu.
+
+Výsledná hodnota pixelu sa pri bilaterálnom filtrovaní~\cite{tomasi} určuje ako vážený priemer hodnôt z~jeho okolia. Váhy závisia od priestorovej vzdialenosti a~od rozdielu jasových alebo farebných hodnôt. Parameter priestorovej vzdialenosti určuje, ako rýchlo klesá vplyv vzdialenejších pixelov pri filtrovaní. Parameter podobnosti hodnôt určuje, ako silno sa majú odlišné pixely pri výpočte potláčať.
+
+Bilaterálne filtrovanie~\cite{zhang} sa využíva aj pri redukcii kompresných artefaktov. Pri obrazových formátoch založených na blokovom spracovaní obrazu, ako je napríklad JPEG, sa takéto artefakty môžu prejaviť najmä ako viditeľné hranice blokov alebo rušivé zmeny v~okolí ostrých hrán. Z~tohto dôvodu je bilaterálny filter vhodným teoretickým základom pre úpravy zamerané na potlačenie JPEG artefaktov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Detekcia hrán a~gradient obrazu}
+\label{sec:edges_gradient}
+
+Hrana v~obraze~\cite{canny} zodpovedá miestu, kde sa výrazne mení jas alebo intenzita pixelov. Pri detekcii hrán sa preto často pracuje s~gradientom, ktorý vyjadruje veľkosť a~smer tejto zmeny. Pri Sobelovom operátore~\cite{hiprsobel} sa gradient v~rastrovom obraze odhaduje z~hodnôt pixelov v~okolí spracovávaného miesta. Operátor slúži na približné určenie veľkosti priestorovej zmeny v~jasovom obraze. Používa dvojicu \(3 \times 3\) masiek, ktoré odhadujú zložky gradientu v~dvoch kolmých smeroch:
+\begin{equation}
+    S_x=
+    \begin{bmatrix}
+        -1 & 0 & 1\\
+        -2 & 0 & 2\\
+        -1 & 0 & 1
+    \end{bmatrix},
+    \qquad
+    S_y=
+    \begin{bmatrix}
+        -1 & -2 & -1\\
+         0 &  0 &  0\\
+         1 &  2 &  1
+    \end{bmatrix}.
+\end{equation}
+Prvá maska zvýrazňuje zmeny v~horizontálnom smere a~druhá maska zmeny vo~vertikálnom smere. Z~týchto dvoch odoziev sa následne určí celková veľkosť zmeny jasu. Vyššia hodnota znamená výraznejšiu zmenu v~okolí pixelu, a~preto môže označovať miesto v~blízkosti hrany.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{PDF dokumenty a~rasterizácia}
+\label{sec:pdf_rasterization}
+
+PDF dokument~\cite{pdfreference} je formát určený na prenos a~zobrazenie dokumentov nezávisle od prostredia, v~ktorom boli vytvorené alebo zobrazované. Na rozdiel od bežného rastrového obrázka nemusí obsahovať iba pixely. Strana PDF môže byť zložená z~textu, vektorovej grafiky, rastrových obrázkov a~ďalších objektov~\cite{whitington}. Vďaka tomu si dokument môže zachovať ostré zobrazenie textu a~čiar aj pri zmene mierky.
+
+Zobrazovací model PDF~\cite{pdfreference} opisuje obsah stránky nezávisle od konkrétneho výstupného zariadenia. To je výhodné pri uchovávaní a~zobrazovaní dokumentov, ale pri pixelových úpravách je potrebné pracovať s~rastrovou podobou stránky. Nástroje ako rozmazanie, zmena farby pozadia, prevod do odtieňov sivej alebo detekcia artefaktov pracujú s~hodnotami jednotlivých pixelov. Ak sa majú rovnaké úpravy použiť aj na PDF dokument, musí sa vybraná strana najprv vykresliť ako rastrový obraz.
+
+Rasterizácia~\cite{rasterizationlecture} znamená prevod grafického obsahu do mriežky pixelov. Pri PDF dokumente to znamená, že textové a~vektorové prvky stránky sa vykreslia do obrazových dát. Výsledkom je rastrový obraz, s~ktorým možno ďalej pracovať rovnako ako s~bežným obrázkom. Po tomto prevode sa ďalšie úpravy vykonávajú nad vizuálnou podobou stránky, nie nad pôvodnými textovými alebo vektorovými objektmi PDF dokumentu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Analýza existujúcich nástrojov na úpravu obrázkov}
+\label{chap_analyza}
+
+Cieľom tejto kapitoly je porovnať vybrané webové nástroje na úpravu obrázkov a~PDF s~požiadavkami navrhovanej aplikácie. Pri porovnaní sa zameriava najmä na tie funkcie, ktoré sú dôležité pri úprave obrázkov a~dokumentov určených do záverečných prác. Jedná sa napríklad o~orezanie, úpravu pozadia, prevod do odtieňov sivej, zakrytie citlivých údajov a~podobne. Súčasťou porovnania je aj spôsob spracovania dát, keďže pri práci s~obrázkami alebo dokumentmi môže ísť o~citlivý obsah.
+Do porovnania neboli zaradené desktopové editory, ako napríklad Adobe Photoshop alebo GIMP. Hoci ide o~rozšírené a~bežne používané nástroje, vyžadujú inštaláciu externého softvéru a~sú určené skôr na komplexnejšie úpravy obrázkov. Z~používateľského hľadiska ide zároveň o~nástroje s~vyššou náročnosťou ovládania, ktoré nie sú zamerané na rýchle a~jednoduché úpravy.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Kritériá porovnávania}
+
+Pri hodnotení nástrojov boli použité tieto kritériá:
+
+\begin{itemize}
+    \item \textbf{Podporované vstupy} -- či nástroj podporuje bežné rastrové formáty a~či vie pracovať aj s~PDF dokumentmi a~vykonávať nad nimi úpravy.
+    \item \textbf{Dostupné úpravy} -- či nástroj obsahuje funkcie potrebné na ručné alebo automatické orezanie, zmenu alebo odstránenie pozadia, prevod do odtieňov sivej, označovanie dôležitých častí, rozmazanie vybraných oblastí, detekciu a~odstránenie JPEG artefaktov a~export výsledku do vhodného formátu.
+    \item \textbf{Spôsob nasadenia a~dostupnosť} -- či je nástroj dostupný priamo cez webový prehliadač bez potreby inštalácie externého softvéru.
+    \item \textbf{Spracovanie dát} -- či sa súbory spracovávajú lokálne v~prehliadači, alebo sa nahrávajú na server.
+    \item \textbf{Používateľské rozhranie} -- či ide o~jednoduchý nástroj na rýchle úpravy alebo má vyššiu náročnosť ovládania.
+    \item \textbf{Cena a~obmedzenia} -- aké funkcie sú dostupné bezplatne a~aké limity má bezplatná verzia.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Prehľad vybraných existujúcich nástrojov}
+V~tejto časti sú predstavené vybrané webové nástroje, ktoré boli zaradené do porovnania. Pri každom z~nich sa hodnotí najmä rozsah podporovaných úprav, práca s~PDF dokumentmi, spôsob spracovania dát a~celková vhodnosť pre rýchle a~jednoduché úpravy pri príprave záverečných prác.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Photopea}
+
+Photopea\footnote{\url{https://www.photopea.com/}} je webový editor s~veľmi širokým rozsahom funkcií. Podporuje bežné rastrové formáty aj PDF a~ponúka nástroje ako orezanie, vrstvy, masky, filtre, rozmazanie alebo odstránenie pozadia. Výhodou je aj to, že Photopea spracováva otvorené súbory priamo v~prehliadači a~neodosiela ich na server.\footnote{\url{https://www.photopea.com/privacy.html}} Tento nástroj umožňuje vykonať na jednom mieste veľké množstvo rôznych úprav. Na druhej strane ide skôr o~komplexný grafický editor než o~jednoduchý nástroj na rýchle úpravy. Niektoré operácie, napríklad zmena farby pozadia, je síce možné vykonať, ale skôr nepriamo pomocou všeobecných grafických nástrojov než ako jednoduchú samostatnú funkciu. Nástroje ako detekcia a~potlačenie JPEG artefaktov chýbajú. Pri praktickom skúšaní sa zároveň ukázalo, že pri niektorých PDF dokumentoch sa text správa neočakávane a~objavujú sa problémy so~zobrazením alebo prekrytím textových prvkov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Pixlr}
+
+Pixlr\footnote{\url{https://pixlr.com/editor/}} je webový editor zameraný najmä na rýchle úpravy obrázkov. Ponúka funkcie ako orezanie, filtre, blur, úpravy farieb, kreslenie a~odstránenie alebo zmenu pozadia. Oproti Photopea pôsobí jednoduchšie a~prístupnejšie, takže je vhodnejší na bežné a~kratšie úpravy obrázkov. Zároveň uvádza, že obsah upravovaný vo~webovej aplikácii sa ukladá lokálne v~prehliadači.\footnote{\url{https://pixlr.com/privacy-policy/}} Na druhej strane nepokrýva všetky požiadavky tejto práce. Samostatná detekcia ani potlačenie JPEG artefaktov v~ňom implementované nie sú. Pri praktickom skúšaní sa zároveň ukázalo, že zmena farby pozadia nepôsobí vždy presne, najmä v~okolí textu alebo jemných hrán, kde môžu zostať časti pôvodného pozadia. Obmedzenejšia je aj práca s~PDF dokumentmi, keďže editor je orientovaný predovšetkým na rastrové obrázky. Pri viacstranových PDF sa pri praktickom skúšaní ukázalo, že nástroj pracoval len s~prvou stranou dokumentu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{remove.bg}
+
+Nástroj remove.bg\footnote{\url{https://www.remove.bg/}} je špecializovaný najmä na automatické odstránenie pozadia z~obrázkov. Jeho hlavnou výhodou je jednoduchosť. Používateľ nahrá obrázok a~výsledok dostane okamžite bez ďalšieho nastavovania. Nevýhodou je úzka špecializácia. remove.bg nerieši orezanie, grayscale, blur, detekciu a~potlačenie JPEG artefaktov ani prácu s~PDF. Zároveň ide o~online službu založenú na nahraní obrázka na server, čo môže byť nevhodné pri citlivých dátach.\footnote{\url{https://www.remove.bg/privacy}} Z~pohľadu tejto práce je preto remove.bg vhodný ako ukážka veľmi dobre zvládnutej jednej funkcie, nie však ako komplexnejší nástroj pre prípravu obrázkov do textu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{iLoveIMG}
+
+Služba iLoveIMG\footnote{\url{https://www.iloveimg.com/}} je webový nástroj určený predovšetkým na rýchlu úpravu rastrových obrázkov. Ponúka funkcie ako orezanie, zmenu rozmerov, kompresiu, konverziu medzi formátmi, odstránenie pozadia, rozmazanie tvárí alebo objektov a~ďalšie jednoduché obrazové úpravy. Z~používateľského hľadiska ide o~prehľadnejší a~jednoduchší nástroj než Photopea, pričom je vhodný najmä na rýchle vykonanie jednej konkrétnej operácie. Keďže ide o~online službu, súbory sa pri práci odosielajú na server, hoci služba uvádza šifrovaný prenos a~mazanie spracovaných súborov po krátkom čase.\footnote{\url{https://www.iloveimg.com/help/privacy}}
+
+Pri praktickom testovaní sa ukázalo, že iLoveIMG nepokrýva všetky požiadavky tejto práce. Neobsahuje samostatnú detekciu ani potlačenie JPEG artefaktov. Taktiež sa nepodarilo jednoducho zmeniť farbu pozadia tak, ako to umožňuje navrhovaná aplikácia. Zakrytie citlivých údajov je riešené skôr cez automatické rozmazanie tvárí alebo objektov, nie ako ručný nástroj, ktorým si používateľ označí ľubovoľnú časť obrázka. Práca s~PDF dokumentmi nie je priamo súčasťou iLoveIMG, ale je riešená samostatne cez službu iLovePDF.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Canva}
+
+Canva\footnote{\url{https://www.canva.com/}} je webový grafický nástroj určený na tvorbu a~úpravu obsahu priamo v~prehliadači. Okrem bežných obrázkov podporuje aj prácu s~PDF dokumentmi. Jej výhodou je prehľadné rozhranie a~široký rozsah bežných úprav dostupných v~jednom prostredí. Pri praktickom testovaní sa však ukázalo, že pri niektorých PDF dokumentoch sa text zobrazoval nepresne a~miestami sa prekrýval. Canva zároveň neobsahuje detekciu ani potlačenie JPEG artefaktov. Nevýhodou je aj to, že odstránenie pozadia je viazané na Canva Pro a~zmena pozadia súvisí s~nástrojmi využívajúcimi prémiové funkcie. Pri citlivejších súboroch je navyše potrebné myslieť na to, že obsah sa pri práci nahráva na server.\footnote{\url{https://www.canva.com/policies/privacy-policy/}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Zhrnutie porovnania nástrojov}
+
+Z~porovnania je vidieť, že žiadny z~vybraných nástrojov nepokrýva všetky požiadavky tejto práce v~jednom prostredí. Photopea a~Pixlr sú silné najmä pri práci s~rastrovými obrázkami, pričom Photopea ponúka širší rozsah funkcií, ale zároveň pôsobí menej jednoducho a~prehľadne než ostatné nástroje. Pixlr je v~tomto smere z~pohľadu používateľa jednoduchší, no pri práci s~PDF má určité obmedzenia. Pri remove.bg ide predovšetkým o~nástroj zameraný na jednu konkrétnu úlohu, a~to odstránenie pozadia. Na rýchle základné úpravy obrázkov je iLoveIMG vhodný, no pri zložitejšej práci už nestačí a~prácu s~PDF rieši oddelene cez službu iLovePDF. Canva síce umožňuje pracovať aj s~PDF dokumentmi, no pri praktickom skúšaní sa ukázalo, že niektoré dôležité nástroje sú dostupné až v~platenej verzii. Prehľad jednotlivých funkcií a~obmedzení vybraných nástrojov je uvedený v~tabuľke~\ref{tab:tools_compare}.
+
+\begin{table}[t]
+    \centering
+    \scriptsize
+    \renewcommand{\arraystretch}{1.25}
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{|P{4cm}|*{6}{C{1.6cm}|}}
+    \hline
+    \rowcolor{gray!20}
+    \rule[-2ex]{0pt}{8ex}
+    \textbf{} &
+    \makecell[c]{\textbf{Vlastné} \\ \textbf{riešenie}} &
+    \textbf{Photopea} &
+    \textbf{Pixlr} &
+    \textbf{remove.bg} &
+    \textbf{iLoveIMG} &
+    \textbf{Canva} \\
+    \hline
+    \rh{Ručné orezanie} & \yes & \yes & \yes & \noo & \yes & \yes \\
+    \hline
+    \rh{Automatické orezanie} & \yes & \noo & \noo & \noo & \noo & \noo \\
+    \hline
+    \rh{Zmena farby pozadia} & \yes & \partly & \yes & \yes & \partly & \partly \\
+    \hline
+    \rh{Odstránenie pozadia} & \yes & \yes & \yes & \yes & \yes & \partly \\
+    \hline
+    \rh{Prevod do odtieňov sivej} & \yes & \yes & \yes & \noo & \yes & \yes \\
+    \hline
+    \rh{Označovanie dôležitých častí} & \yes & \yes & \yes & \noo & \yes & \yes \\
+    \hline
+    \rh{Zakrytie citlivých údajov} & \yes & \yes & \yes & \noo & \partly & \yes \\
+    \hline
+    \rh{Podpora PDF} & \yes & \yes & \partly & \noo & \partly & \partly \\
+    \hline
+    \rh{Export do iného formátu} & \yes & \yes & \yes & \noo & \yes & \yes \\
+    \hline
+    \rh{Detekcia JPEG artefaktov} & \yes & \noo & \noo & \noo & \noo & \noo \\
+    \hline
+    \rh{Potlačenie JPEG artefaktov} & \yes & \noo & \noo & \noo & \noo & \noo \\
+    \hline
+    \rh{Kalibrácia skutočnej veľkosti} & \yes & \noo & \noo & \noo & \noo & \noo \\
+    \hline
+    \rh{Lokálne spracovanie} & \yes & \yes & \yes & \noo & \noo & \noo \\
+    \hline
+    \end{tabular}
+    \caption{Porovnanie vybraných nástrojov podľa požiadaviek tejto práce. Hodnota \emph{čiast.} znamená, že danú požiadavku je možné splniť len nepriamo alebo obmedzene.}
+    \label{tab:tools_compare}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Návrh riešenia webovej aplikácie pre úpravu obrázkov}
+\label{chap_navrh}
+Táto kapitola sa venuje návrhu riešenia webovej aplikácie pre úpravu obrázkov. Opisuje hlavné požiadavky na aplikáciu, návrh používateľského rozhrania, spôsob spracovania vstupných súborov a~princíp jednotlivých editačných nástrojov. Súčasťou kapitoly je aj návrh kalibrácie a~práce s~mierkou, spôsob zberu a~vyhodnotenia štatistík používania.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Ciele a~požiadavky na riešenie}
+
+Cieľom práce bolo vytvoriť webovú aplikáciu na rýchlu úpravu obrázkov a~PDF dokumentov priamo v~prehliadači. Aplikácia má byť určená najmä na jednoduché úpravy, ktoré sa často opakujú pri príprave obrázkov do záverečných prác, bez potreby používania zložitých grafických editorov.
+
+Medzi hlavné požiadavky patrilo ručné orezávanie a~automatické orezávanie podľa obsahu. Táto funkcia rieši najmä obrázky s~nadbytočnými okrajmi, ktoré po vložení do textu pôsobia nevyvážene alebo vytvárajú zbytočné odsadenie. Ďalšou požiadavkou bola zmena farby pozadia a~odstránenie pozadia, aby bolo možné obrázky vizuálne zjednotiť alebo ponechať iba ich hlavný obsah. Aplikácia mala ďalej podporovať prevod do odtieňov sivej, označovanie dôležitých častí a~rozmazanie citlivých údajov. Súčasťou požiadaviek bolo aj zvýraznenie a~potlačenie JPEG artefaktov, ktoré sa môžu objaviť pri silne komprimovaných obrázkoch. 
+
+Dôležitá bola aj možnosť exportu výsledku do viacerých formátov, kalibrácia zobrazenia pre prácu s~reálnou mierkou a~jednoduché ovládanie vhodné aj pre menej technicky zdatných používateľov. Väčšina operácií má prebiehať na strane klienta bez serverového spracovania nahraných súborov. Výsledná aplikácia je preto navrhnutá ako single-page webová aplikácia, ktorú je možné nasadiť na statický hosting. Súčasťou riešenia je aj anonymizované zaznamenávanie používania nástrojov na neskoršie vyhodnotenie.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Používateľské rozhranie aplikácie}
+
+Používateľské rozhranie aplikácie pozostáva z~dvoch základných podstránok. Úvodná stránka slúži na vloženie vstupného súboru a~poskytuje stručné informácie o~možnostiach aplikácie. Hlavná stránka editora predstavuje pracovné prostredie určené na samotnú úpravu načítaného obsahu.
+
+Rozloženie editora pozostáva z~horného panelu, pracovnej plochy a~bočného panelu. Horný panel obsahuje globálne ovládacie prvky, ako sú operácie späť, opakovanie akcie, reset, ovládanie mierky zobrazenia a~kalibrácia. Stredná časť predstavuje pracovnú plochu s~náhľadom upravovaného obsahu, ktorá umožňuje priamu interakciu s~obrázkom. Bočný panel obsahuje jednotlivé editačné nástroje usporiadané do sekcií, pričom otvorená sekcia určuje aktuálne používaný nástroj. Celkové rozloženie je znázornené na obrázku~\ref{fig:editor_page}.
+
+\begin{figure}[t]
+    \centering
+    \fbox{\includegraphics[width=0.98\textwidth]{obrazky-figures/editorPage.png}}
+    \caption{Používateľské rozhranie editora pozostávajúce z~pracovnej plochy s~náhľadom obrázka, horného panelu ovládacích prvkov a~bočného panelu obsahujúceho jednotlivé editačné nástroje.}
+    \label{fig:editor_page}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Vstupné súbory a~ich spracovanie}
+
+Spracovanie vstupných súborov je založené na rozlíšení dvoch základných typov vstupov, ktorými sú rastrové obrázky a~PDF dokumenty. Po načítaní súboru je potrebné získať základné metadáta, najmä rozmery, veľkosť a~typ súboru, aby bolo možné správne inicializovať pracovnú plochu a~ďalšie operácie editora.
+
+\subsection{Spracovanie rastrových obrázkov}
+
+Pri rastrových obrázkoch sa vychádza z~pixelovej reprezentácie, ktorá umožňuje priamu manipuláciu s~obrazovými dátami. Po načítaní je obrázok zobrazený ako náhľad a~pri jednotlivých úpravách sa využíva prvok \texttt{canvas} alebo pomocné canvas prvky. Vďaka tomu je možné vykonávať operácie na úrovni pixelov, napríklad zmenu farieb, rozmazanie alebo detekciu artefaktov. Zároveň sa priebežne aktualizuje náhľad, ktorý zobrazuje aktuálny stav upravovaného obrazu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Spracovanie PDF dokumentov}
+
+PDF dokumenty sa v~aplikácii nespracúvajú priamo ako vektorový obsah, ale ako jednotlivé strany, ktoré sa ďalej spracúvajú vo~forme rastrového náhľadu. Dôvodom je najmä to, že väčšina navrhnutých nástrojov, napríklad blur, zmena farby pozadia alebo detekcia artefaktov, pracuje priamo s~pixelmi. Ak sa teda má nad PDF použiť rovnaký spôsob úprav ako nad bežným obrázkom, je potrebné zvolený dokument najprv previesť do rastra. Pri tom sa síce počas úprav nepracuje s~pôvodnou vektorovou podobou PDF dokumentu, ale pre potreby tejto aplikácie to nevadí. Cieľom nie je meniť vnútornú štruktúru PDF, napríklad textové objekty alebo vektorové prvky, ale upraviť jeho výsledný vizuálny vzhľad podobne ako pri obrázkoch. Vďaka tomu je možné použiť rovnaké nástroje nad PDF dokumentmi ako nad rastrovými obrázkami.
+
+Pri viacstranových PDF dokumentoch je možné vybrať konkrétnu stranu, s~ktorou sa bude ďalej pracovať. Z~tohto dôvodu sa zobrazujú náhľady jednotlivých strán, z~ktorých si používateľ vyberie požadovanú stranu, ako je znázornené na obrázku~\ref{fig:pdf_pages}. Editor následne pracuje vždy iba s~jednou aktívnou stranou.
+
+\begin{figure}[t]
+    \centering
+    \fbox{\includegraphics[width=0.98\textwidth]{obrazky-figures/pdf_pages.png}}
+    \caption{Dialógové okno s~náhľadmi jednotlivých strán viacstranového PDF dokumentu, ktoré slúži na výber aktívnej strany pre ďalšie spracovanie.}
+    \label{fig:pdf_pages}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Návrh editačných nástrojov}
+
+Editačné nástroje boli navrhnuté tak, aby používateľ mohol vykonávať základné úpravy priamo nad zobrazeným obsahom bez zložitých nastavení. Cieľom bolo vytvoriť jednoduché ovládanie, okamžitý náhľad výsledku a~jednotný spôsob práce pre rastrové obrázky aj PDF dokumenty.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Manuálne orezávanie}
+
+Orezávanie je založené na obdĺžnikovej výberovej oblasti priamo nad zobrazeným obsahom. Používateľ môže meniť jej veľkosť aj polohu pomocou rohových a~bočných úchytov. Vďaka tomu sa rovno ukazuje, ktorá časť obrázka alebo dokumentu zostane po vykonaní operácie zachovaná. Dôležité bolo zachovať rovnaký spôsob ovládania pre rastrové obrázky aj PDF dokumenty. Pri rastrových obrázkoch sa orezáva priamo vybraná časť, zatiaľ čo pri viacstranových PDF dokumentoch sa pracuje s~vybranou oblasťou aktuálnej strany. Z~pohľadu používateľa však zostáva princíp ovládania rovnaký. Editor podporuje priblíženie a~posun náhľadu, preto manipulácia s~výberovou oblasťou musí byť oddelená od navigácie v~obraze, aby pri zmene orezu nedochádzalo ku~konfliktu s~posúvaním alebo približovaním obsahu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Orezávanie podľa obsahu}
+
+Orezávanie podľa obsahu slúži ako doplnok k~manuálnemu orezávaniu. Jeho cieľom je automaticky určiť takú výberovú oblasť, ktorá odstráni nadbytočné okraje a~zachová len podstatný obsah obrázka. Tento nástroj je vhodný najmä v~situáciách, keď sa v~okolí hlavného obsahu nachádza takmer jednoliate pozadie. Základom je odlíšenie pozadia od jeho obsahu. Vychádza sa z~predpokladu, že okrajové časti obrázka väčšinou obsahujú pozadie. Následne sa určí oblasť, ktorá už nepatrí do pozadia, a~tá sa použije ako návrh novej orezávacej oblasti. Hlavnou výhodou je, že používateľ nemusí výber oblasti obsahu nastavovať ručne.
+
+Dôležitou vlastnosťou tohto nástroja je, že automatické orezanie sa najprv zobrazí iba ako návrh. Samotná zmena sa vykoná až po potvrdení používateľom. Tento postup bol zvolený zámerne, pretože automatická detekcia obsahu nemusí byť vo~všetkých prípadoch bezchybná. Používateľ preto môže pomocou jedného tlačidla vybrať oblasť obsahu, pričom stále môže skontrolovať výsledok orezania a~prípadne ho upraviť.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Zmena farby pozadia}
+
+Zmena farby pozadia je v~aplikácii založená na určení častí obrazu, ktoré pravdepodobne tvoria pozadie. Tieto časti sa určujú podľa podobnosti pixelov s~referenčnou farbou a~podľa hodnoty alfa kanála, ako bolo popísané v~kapitole~\ref{sec:color_masks}. V~návrhu aplikácie sa ako referenčná farba používa odhadnutá farba pozadia, ktorá sa získava najmä z~okrajových častí obrázka. Tento postup vychádza z~predpokladu, že pri jednoduchých obrázkoch, screenshotoch alebo dokumentoch sa pozadie často nachádza práve na okrajoch.
+
+Pri zmene farby pozadia je potrebné rozlišovať, či obrázok obsahuje alfa kanál. Ak obrázok alfa kanál neobsahuje, zvolená farba nahrádza detegované pozadie priamo v~obrazových dátach. Ak obrázok priehľadnosť obsahuje alebo bolo pozadie odstránené už skôr, nová farba sa nepoužije ako náhrada pixelov, ale ako podklad pod pôvodný obraz. Vďaka tomu zostáva zachovaná existujúca priehľadnosť. Z~hľadiska používateľského ovládania je dôležité, aby sa zmena farby pozadia najprv zobrazila iba ako náhľad a~až následne sa po potvrdení trvalo aplikovala. Vďaka tomu sa zabezpečí, aby sa pôvodný obraz nemenil pri každej zmene výberu farby.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh odstránenia pozadia}
+
+Odstránenie pozadia využíva rovnaký základ ako zmena farby pozadia. Vychádza z~masky pozadia, ktorá sa vytvára podľa podobnosti s~referenčnou farbou a~podľa hodnoty alfa kanála, ako bolo popísané v~kapitole~\ref{sec:color_masks}. V~aplikácii sa najprv odhadne farba pozadia z~okrajových častí obrazu a~následne sa určia pixely, ktoré do pozadia pravdepodobne patria. Samotná farebná podobnosť nestačí, pretože podobnú farbu ako pozadie môžu mať aj vnútorné časti obrázka. Preto sa označenie pozadia nevyberá iba podľa farby, ale šíri sa od okrajových pixelov do susedných oblastí. Do masky sa tak dostanú najmä pixely, ktoré sú podobné odhadnutému pozadiu a~zároveň sú spojené s~okrajom obrazu. Tým sa znižuje riziko, že sa omylom odstránia časti hlavného obsahu.
+
+Po vytvorení masky sa pixelom patriacim do pozadia nastaví úplná priehľadnosť. Výsledkom je obrázok s~transparentným pozadím. Pri PDF dokumentoch sa rovnaký postup aplikuje až po rasterizácii vybranej strany dokumentu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh prevodu do odtieňov sivej}
+
+Nástroj na prevod do odtieňov sivej vychádza z~výpočtu jasovej zložky, ktorý je popísaný v~kapitole~\ref{sec:grayscale}. Používateľ však nemusí efekt aplikovať iba naplno. Môže si nastaviť jeho intenzitu, čím vznikne prechod medzi pôvodným farebným obrazom a~jeho sivou verziou. Ak \(R\), \(G\) a~\(B\) označujú pôvodné farebné zložky pixelu a~\(Y\) jeho jasovú hodnotu, potom sa pri intenzite \(s\in\langle0,1\rangle\) výsledné zložky vypočítajú ako
+\begin{equation}
+    R'=(1-s)R+sY,\qquad
+    G'=(1-s)G+sY,\qquad
+    B'=(1-s)B+sY.
+\end{equation}
+Pri \(s=0\) zostáva pixel bez zmeny a~pri \(s=1\) majú všetky tri zložky hodnotu \(Y\), teda vznikne úplná sivá verzia. Hodnoty medzi týmito hranicami vytvárajú plynulý prechod medzi pôvodným farebným obrazom a~obrazom v~odtieňoch sivej. Alfa kanál sa pri tejto operácii nemení, aby zostala zachovaná priehľadnosť obrazu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh nástrojov na označovanie a~rozmazanie častí obrazu}
+
+Nástroje na označovanie a~rozmazanie častí obrazu pracujú iba nad vybranou oblasťou obrázka. Pri označovaní dôležitých častí si používateľ volí tvar, farbu a~hrúbku obrysu a~následne na obrázku vytvára obdĺžnik alebo elipsu. Po vytvorení je možné tvar ešte presunúť alebo zmeniť jeho veľkosť, takže označenie možno dodatočne zmeniť. Pri rozmazaní používateľ pracuje priamo nad obrázkom pohybom kurzora. Nastavuje sa pritom veľkosť rozmazanej oblasti a~intenzita efektu, aby bolo možné zakryť väčšie plochy aj jemnejšie detaily.
+
+Keďže používateľ môže obrázok približovať a~posúvať, nástroje musia správne prepočítavať polohu kurzora. Vďaka tomu sa označenie alebo rozmazanie vykoná presne na tom mieste obrázka, na ktoré používateľ klikne alebo ktorým prejde kurzorom. Pomocné prvky, napríklad obrys práve vytváraného tvaru, úchyty na jeho úpravu alebo kurzor rozmazania, sa preto zobrazujú oddelene od samotného upravovaného obrazu. Vďaka tomu je možné zobrazovať priebeh práce bez toho, aby sa pomocné vizuálne prvky zapísali do výsledného obrázka.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh detekcie JPEG artefaktov}
+
+Detekcia JPEG artefaktov je navrhnutá ako kombinácia vyhladenia obrazu, porovnania pôvodného obrazu s~vyhladenou verziou a~kontroly okolia hrán. Cieľom nie je nájsť všetky artefakty, ale zvýrazniť miesta, ktoré sa od vyhladenej verzie obrazu viditeľne líšia. Najprv sa preto vytvorí jemne vyhladená verzia obrazu pomocou bilaterálneho filtra, ktorý je popísaný v~kapitole~\ref{sec:bilateral}. Z~pôvodného obrazu sa zároveň vypočíta jasová zložka podľa kapitoly~\ref{sec:grayscale} a~nad ňou sa určí mapa gradientu pomocou Sobelovho operátora popísaného v~kapitole~\ref{sec:edges_gradient}.
+
+Gradient sa používa na určenie miest, kde má zmysel hľadať artefakty. Pri návrhu sa preto pracuje s~hodnotou, od ktorej sa pixel považuje za súčasť širšieho okolia hrán, a~s~hodnotou, od ktorej sa už pixel považuje za výraznú hranu. Samotné výrazné hrany sa nemajú označovať ako artefakty, pretože by to viedlo k~falošným detekciám. Okrem toho sa porovnáva farebný rozdiel medzi pôvodným a~vyhladeným obrazom. Pixel sa označí ako pravdepodobný artefakt iba vtedy, keď je tento rozdiel dostatočne veľký, pixel leží v~okolí hrany a~zároveň nejde o~samotnú výraznú hranu.
+
+Pri návrhu bolo potrebné zvoliť také nastavenie parametrov, ktoré nebude príliš prísne, ale zároveň nebude označovať veľkú časť samotného obrazu. Ako vyvážené nastavenie boli po vizuálnom porovnaní zvolené hodnoty prahu farebnej odchýlky \(1\), dolného prahu gradientu \(40\), horného prahu gradientu \(160\) a~dodatočného limitu gradientu \(120\). Prah farebnej odchýlky určuje, aký rozdiel medzi pôvodným a~vyhladeným obrazom sa ešte považuje za významný. Dolný prah gradientu určuje širšie okolie hrán, v~ktorom sa artefakty hľadajú. Horný prah gradientu a~dodatočný limit gradientu slúžia na vylúčenie príliš výrazných hrán, aby sa za artefakty neoznačovali bežné hrany alebo text. Toto nastavenie zvýrazňuje najmä drobné odchýlky v~okolí hrán, kde sa JPEG artefakty prejavujú najčastejšie. Porovnanie príliš prísneho, vyváženého a~príliš citlivého nastavenia je uvedené na obrázku~\ref{fig:jpeg_artifact_params}.
+
+\begin{figure}[t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_1.png}}
+        
+        \small Príliš prísne nastavenie
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_2.png}}
+        
+        \small Vyvážené nastavenie
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_3.png}}
+        
+        \small Príliš citlivé nastavenie
+    \end{minipage}
+
+    \caption{Porovnanie troch nastavení detekcie JPEG artefaktov. Pri príliš prísnom nastavení zostáva väčšina odchýlok nezachytená. Vyvážené nastavenie zachytáva hlavne rušivé zmeny v~okolí hrán, ale ešte neoznačuje veľkú časť samotného obrazu. Pri príliš citlivom nastavení sa už zvýrazňujú aj bežné hrany, text a~väčšie množstvo okolitých pixelov.}
+    \label{fig:jpeg_artifact_params}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh potlačenia JPEG artefaktov}
+
+Potlačenie JPEG artefaktov nadväzuje na princíp vyhladzovania obrazu a~bilaterálneho filtra, ktoré sú popísané v~kapitolách~\ref{sec:filter_blur} a~\ref{sec:bilateral}. Hlavným krokom je bilaterálne vyhladenie obrazu. Jeho úlohou je potlačiť drobné kompresné odchýlky, ale zároveň čo najviac zachovať hlavné hrany. Pri návrhu bolo preto potrebné nájsť kompromis medzi slabým vyhladením, pri ktorom artefakty zostávajú výrazné, a~príliš silným vyhladením, pri ktorom sa obraz už viditeľne rozmazáva.
+
+Po vizuálnom porovnaní bolo ako vyvážené zvolené nastavenie s~polomerom okolia \(4\) pixely, parametrom priestorovej vzdialenosti \(4\) a~parametrom farebnej podobnosti \(60\). Toto nastavenie pri testovaných obrázkoch najlepšie znižovalo viditeľnosť kompresných artefaktov, pričom ešte zachovávalo prijateľnú ostrosť hlavných hrán. Porovnanie slabšieho, vyváženého a~príliš silného vyhladenia je uvedené na obrázku~\ref{fig:jpeg_bilateral_params}.
+
+\begin{figure}[t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_fix_1.jpg}
+        }
+        \small Slabé vyhladenie
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_fix_2.jpg}}
+        
+        \small Vyvážené vyhladenie
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[width=\linewidth]{obrazky-figures/artefacts_fix_3.jpg}}
+        
+        \small Príliš silné vyhladenie
+    \end{minipage}
+
+    \caption{Porovnanie potlačenia JPEG artefaktov pri rôznej sile bilaterálneho vyhladenia. Pri slabom nastavení s~polomerom okolia \(1\) pixel, priestorovou vzdialenosťou \(1\) a~farebnou podobnosťou \(10\) zostávajú kompresné artefakty stále viditeľné. Vyvážené nastavenie s~polomerom okolia \(4\) pixely, priestorovou vzdialenosťou \(4\) a~farebnou podobnosťou \(60\) artefakty výraznejšie potláča, ale ešte zachováva hlavné hrany obrazu. Pri príliš silnom nastavení s~polomerom okolia \(8\) pixelov, priestorovou vzdialenosťou \(8\) a~farebnou podobnosťou \(120\) sú artefakty menej výrazné, no obraz už pôsobí rozmazane a~stráca časť detailov.}
+    \label{fig:jpeg_bilateral_params}
+\end{figure}
+
+Keďže samotné vyhladenie môže znížiť ostrosť obrazu, po ňom nasleduje ešte mierne doostrenie. Z~vyhladeného obrazu sa vytvorí verzia rozmazaná Gaussovým filtrom a~rozdiel medzi týmito obrazmi sa pripočíta späť k~vyhladenému obrazu. Navrhnuté je Gaussovské jadro veľkosti \(5\), parameter rozmazania \(1.0\) a~sila doostrenia \(1.5\). Tento krok má iba čiastočne obnoviť ostrosť po vyhladení, nie vytvárať výrazný nový efekt. Výsledkom je obraz, v~ktorom sú drobné kompresné artefakty menej viditeľné, pričom hlavné hrany zostávajú prijateľne zachované.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Návrh exportu výstupného súboru}
+
+Export vychádza z~aktuálneho stavu náhľadu, takže používateľ exportuje práve tú podobu obsahu, ktorú vidí po vykonaných úpravách. Ak je aktívna orezávacia oblasť, exportuje sa iba táto časť, inak sa uloží celý obsah. Pri rastrových obrázkoch ide najmä o~PNG, JPEG a~PDF. Pri PDF dokumentoch je potrebné zachovať aj možnosť exportu späť do formátu PDF. Používateľ zároveň môže súbor premenovať a~vidieť predpokladanú veľkosť výsledného súboru ešte pred samotným uložením.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Kalibrácia a~práca s~mierkou}
+
+Kalibrácia slúži na to, aby zobrazený obsah lepšie zodpovedal reálnej veľkosti na obrazovke. Bez kalibrácie aplikácia pozná iba rozmery obrázka v~pixeloch, nie však jeho fyzickú veľkosť pri aktuálnom zobrazení. Základom riešenia je preto odhad hodnoty \texttt{DPI}, ktorá vyjadruje počet CSS pixelov na jeden palec obrazovky.
+
+\begin{figure}[!t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.8\textwidth]{obrazky-figures/calibration.png}}
+    \caption{Dialóg pre kalibráciu obrazovky. Používateľ môže nastaviť \texttt{screenDPI} buď zadaním nameranej dĺžky kalibračnej čiary, alebo úpravou posuvníka tak, aby zobrazená kreditná karta zodpovedala reálnej veľkosti.}
+    \label{fig:calibration}
+\end{figure}
+
+Kalibráciu možno vykonať dvoma spôsobmi, ako je zobrazené na obrázku~\ref{fig:calibration}. Prvý spôsob využíva kalibračnú čiaru zobrazovanú na obrazovke. Používateľ zmeria jej reálnu dĺžku v~milimetroch a~túto hodnotu zadá do aplikácie. Ak má čiara na obrazovke šírku \(c_{\mathrm{px}}\) CSS pixelov a~používateľ nameria dĺžku \(m_{\mathrm{mm}}\) milimetrov, hodnota \texttt{DPI} sa vypočíta ako
+\begin{equation}
+    \texttt{DPI}=\frac{c_{\mathrm{px}}\cdot 25.4}{m_{\mathrm{mm}}}.
+\end{equation}
+Hodnota \(25.4\) predstavuje počet milimetrov v~jednom palci. Druhý spôsob využíva obrázok kreditnej karty so~šírkou \(85.6\,\mathrm{mm}\). Používateľ upraví jej zobrazenú veľkosť tak, aby zodpovedala skutočnej karte. Výpočet je rovnaký, iba namiesto nameranej čiary sa použije známa šírka karty:
+\begin{equation}
+    \texttt{DPI}=\frac{w_{\mathrm{px}}\cdot 25.4}{85.6},
+\end{equation}
+kde \(w_{\mathrm{px}}\) je zobrazená šírka karty v~CSS pixeloch. Po kalibrácii možno určiť, akú fyzickú veľkosť má zobrazený obsah na obrazovke. Ak má zobrazený objekt šírku \(w_{\mathrm{px}}\) CSS pixelov, jeho šírka v~milimetroch sa vypočíta ako
+\begin{equation}
+    w_{\mathrm{mm}}=\frac{w_{\mathrm{px}}}{\texttt{DPI}}\cdot 25.4.
+\end{equation}
+Táto hodnota sa následne porovná s~referenčnou šírkou zadanou používateľom. Mierka v~percentách vyjadruje, či je obsah zobrazený menší, rovnaký alebo väčší než požadovaná fyzická veľkosť. Pri zmene priblíženia stránky v~prehliadači sa hodnota zobrazenia môže zmeniť, preto aplikácia pri výpočte pracuje aj s~aktuálnym faktorom priblíženia. Cieľom je, aby po kalibrácii zostala mierka čo najbližšie k~reálnej veľkosti aj pri ďalšej práci s~obrazom.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Návrh zberu a~vyhodnotenia štatistík}
+
+Cieľom zberu štatistík je získať prehľad o~tom, ako sa aplikácia reálne používa a~ktoré nástroje sa využívajú najčastejšie. Zaznamenávajú sa preto najmä udalosti súvisiace s~úpravami obrazu. Základom riešenia je ukladanie anonymných udalostí do jednej relácie používateľa. Táto relácia trvá od vloženia vstupného súboru až po následný export. Každá relácia je identifikovaná samostatným identifikátorom a~obsahuje zoznam vykonaných akcií. Keďže aplikácia je nasadená na GitHub Pages ako statická webová stránka, hosting neposkytuje vlastnú serverovú logiku na prijímanie a~ukladanie analytických dát. Z~tohto dôvodu sa odosielajú zozbierané údaje na externý endpoint hostovaný na službe Endora, ktorý zabezpečí ich uloženie pre neskoršie vyhodnotenie.
+
+Zozbierané údaje sa ukladajú v~jednoduchej štruktúre typu NDJSON, ktorú je možné ďalej spracovať offline. Pri vyhodnotení je potrebné sledovať najmä počet akcií podľa typu, počet akcií na jednu reláciu a~vývoj používania v~čase. Výstupom majú byť prehľadné grafy, z~ktorých bude možné určiť najčastejšie používané nástroje a~počet rôznych používateľov za mesiac.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Implementácia aplikácie}
+\label{chap_implementacia}
+
+V~tejto kapitole je popísaná praktická implementácia webovej aplikácie, ktorá vychádza z~návrhu uvedeného v~kapitole~\ref{chap_navrh}. Ako prvé je predstavená celková štruktúra a~frontend. Nasleduje podrobnejší popis projektu a~spôsobu spracovania nahrávaných súborov. Následne sa kapitola sústredí na implementáciu jednotlivých nástrojov, kalibráciu, logovanie používateľskej aktivity na stránke a~nasadenie aplikácie. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Štruktúra projektu}
+
+Projekt je rozdelený do jednotlivých častí:
+\begin{itemize}
+    \item{\texttt{views} -- priečinok s~podstránkami aplikácie (Landing a~Editor).}
+    \item{\texttt{components} -- UI komponenty aplikácie. Jedná sa najmä o~rozloženie, teda horný a~bočný panel a~ovládacie prvky jednotlivých nástrojov.}
+    \item{\texttt{composables} -- logika implementovaná cez Vue composables. Ide najmä o~implementáciu jednotlivých nástrojov, históriu krokov a~podobne.}
+    \item{\texttt{assets} -- priečinok s~globálnymi štýlmi, ikonami a~obrázkami.}
+    \item{\texttt{analytics.js} -- logovanie aktivity používateľov na stránke.}
+    \item{\texttt{statistics} -- priečinok so~skriptom pre analýzu logov používateľov a~generovanie grafov.}
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Frontend a~rozloženie aplikácie}
+
+Frontend aplikácie je implementovaný vo~frameworku Vue 3. Navigácia medzi podstránkami je riešená pomocou Vue Router.
+
+Aplikácia obsahuje dve podstránky:
+\begin{itemize}
+    \item \texttt{views/Landing.vue} -- úvodná stránka so~stručným popisom funkcionality, možnosť vloženia obrázka pomocou drag\&drop, výber súboru cez dialóg alebo vloženia obrázka zo~schránky.
+    \item \texttt{views/Editor.vue} -- hlavná pracovná plocha na úpravu obrázkov s~možnosťami výberu vhodného nástroja na úpravu.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Globálne štýly aplikácie}
+
+Globálne štýly aplikácie sú definované v~súbore \texttt{assets/main.css}. Súbor obsahuje triedy v~tvare \texttt{ty-<text>-*} a~ich hodnoty vychádzajú z~tokenov Material Design\footnote{\url{https://m3.material.io/styles/typography/type-scale-tokens}}, aby bolo písmo jednotné celej aplikácii. Jednotné farby sú definované pomocou CSS premenných v~tvare \texttt{--<color>-*}. Farebná paleta je navrhnutá podľa odporúčaní Atlassian Design System\footnote{\url{https://atlassian.design/foundations/color/accents}}. Okrem toho sú v~súbore definované aj pomocné triedy pre pozadia a~základné vzhľadové nastavenia komponentov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Rozloženie v~editore}
+
+Stránka editora je zložená z~troch hlavných komponentov. Jedná sa o~horný panel ovládacích prvkov (\texttt{\path{components/Topbar.vue}}), pracovnú plochu s~náhľadom upravovaného obrázku (\texttt{components/ImageArea.vue}) a~pravý panel nástrojov (\texttt{components/Sidebar.vue}). 
+
+\texttt{Topbar.vue} obsahuje ovládacie prvky rozhrania. Medzi základné ovládacie prvky patrí krok späť, opakovanie akcie, reset, ovládanie mierky zobrazenia a~kalibrácia. \texttt{Sidebar.vue} obsahuje jednotlivé pracovné nástroje v~rozbaľovacích sekciách, pričom otvorená sekcia určuje aktuálne používaný nástroj.
+
+Komunikácia medzi komponentmi je implementovaná cez \texttt{props} a~\texttt{emit} udalosti.  Stav aplikácie, ako napríklad aktívny nástroj a~jeho parametre, spravuje komponent \texttt{Editor.vue}. Naopak, \texttt{ImageArea.vue} emituje zmeny, ako napríklad metadáta a~rozmery pracovnej oblasti, aby sa rozhranie v~pravom paneli a~hornom paneli priebežne synchronizovalo. Komponent \texttt{Editor.vue} tieto údaje následne posiela ďalej do horného panelu a~bočného panelu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Navigácia a~posun po pracovnej ploche}
+
+Navigácia a~posun po pracovnej ploche sú implementované pomocou knižnice \texttt{panzoom}. Po inicializácii pomocou funkcie \texttt{initPanzoom()} sa nastaví počiatočná mierka tak, aby sa celý obsah zmestil do dostupnej pracovnej plochy. Aplikácia pri tom porovná pomer šírky a~výšky pracovnej plochy k~rozmerom načítaného obsahu a~použije menšiu z~týchto hodnôt.
+
+Posun je možný ťahaním obsahu, kolieskom myši alebo touchpadom. Pri udalosti \texttt{wheel} bez klávesu \texttt{Ctrl} alebo \texttt{Meta} sa priblíženie zablokuje a~udalosť sa použije na posun obsahu pomocou \texttt{panzoom.moveBy()}. Hodnota mierky \texttt{displayScale} v~hornom paneli sa aktualizuje pri udalostiach \texttt{zoom} a~\texttt{pan}.
+
+Pri priamom zadaní percent v~používateľskom rozhraní sa cieľová mierka prepočíta vo~funkcii \texttt{setDisplayScale()} a~aplikuje sa pomocou \texttt{panzoom.zoomTo()} okolo stredu náhľadu. Pri zmene šírky kontajnera sa horizontálna pozícia posunie o~polovicu rozdielu šírky cez funkciu \texttt{handleWrapperResize()}, aby obsah zostal približne vycentrovaný.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Spracovanie a~načítanie vstupných súborov}
+Aplikácia podporuje viacero možností vloženia súboru. Používateľ môže použiť klasický výber súboru, drag\&drop alebo vloženie obrázka zo~schránky. Celý proces načítania vstupného súboru je znázornený na obrázku~\ref{fig:load_file}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{obrazky-figures/input_files.pdf}
+    \caption{Diagram procesu načítania vstupného súboru v~aplikácii. Schéma znázorňuje rozdiel medzi načítaním rastrového obrázka a~PDF dokumentu a~zároveň ukazuje miesto, v~ktorom sa oba vstupy prevádzajú na spoločnú internú reprezentáciu pre ďalšie spracovanie v~editore.}
+    \label{fig:load_file}
+\end{figure}
+
+Pri klasických obrázkoch sa obsah súboru načíta pomocou objektu \texttt{FileReader} a~uloží sa ako dátová URL adresa. Ide o~textovú reprezentáciu súboru zakódovanú priamo v~reťazci URL, ktorá sa následne použije ako zdroj náhľadu. Súčasne sa získajú základné metadáta, ako napríklad názov súboru, typ súboru, veľkosť, dátum poslednej úpravy a~rozmery obrázka. Po úspešnom načítaní sa vytvorí počiatočná výberová oblasť pre orezanie, ktorá zodpovedá celej ploche obrázka. Ako posledné sa vykoná základná analýza obrázka, vďaka ktorej sa zisťuje prítomnosť alfa kanála a~odhaduje farba pozadia.
+
+Pri PDF dokumentoch je postup odlišný. Súbor sa najprv načíta ako pole bajtov typu \texttt{Uint8Array}, ktoré slúži ako interná reprezentácia dokumentu. Z~načítaných dát sa následne vytvorí objektová URL adresa, teda dočasný odkaz na binárne dáta uložené v~pamäti prehliadača, ktorý sa použije na vytvorenie náhľadu dokumentu. Na spracovanie PDF sa využíva knižnica \texttt{pdfjs-dist}, pomocou ktorej sa vybraná strana dokumentu rasterizuje do prvku \texttt{canvas}. Súčasne sa získajú základné informácie o~dokumente, teda počet strán a~aktuálne vybraná strana.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Detekcia typu vstupného súboru}
+
+Detekcia typu súboru je realizovaná na základe MIME typu začínajúceho \texttt{image/} pre rastrové obrázky a~\texttt{application/pdf} pre PDF súbory.
+
+Ak ide o~obrázok, vstup sa spracováva ako jeden rastrový objekt, nad ktorým je možné vykonávať úpravy priamo na úrovni pixelov. To je vhodné najmä pre nástroje ako blur, grayscale, zmena farby pozadia a~podobne. Pri PDF dokumente sa aktivuje samostatná vetva spracovania založená na práci s~jednotlivými stranami dokumentu. PDF nie je interpretované ako jeden obrazový objekt, ale ako kolekcia strán, z~ktorých sa vždy spracováva aktuálne zvolená strana.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Viacstranové PDF dokumenty}
+
+Ak dokument obsahuje viac než jednu stranu, editor automaticky otvorí dialógové okno s~náhľadmi jednotlivých strán. Pri viacstranových PDF dokumentoch aplikácia nepracuje s~celým dokumentom naraz, ale vždy s~jednou aktuálne zvolenou stranou. Každá strana sa samostatne vyrenderuje do zmenšeného prvku \texttt{canvas} a~následne sa zobrazí ako náhľad pre výber. Po zvolení konkrétnej strany sa táto strana nastaví ako aktívna a~ďalšie operácie v~editore sa vykonávajú už len nad ňou.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Nástroje na úpravu obrazu}
+
+Implementácia editačných nástrojov prebieha výhradne lokálne na strane klienta v~prehliadači, teda bez serverových operácií nad nahranými súbormi. Rastrové úpravy sú realizované nad \texttt{Canvas API} pomocou týchto troch metód:
+\begin{itemize}
+    \item \texttt{drawImage()} -- používa sa na zobrazenie náhľadu vloženého súboru a~na kopírovanie zvolenej oblasti.
+    \item \texttt{getImageData()} -- načíta pixely z~definovanej oblasti canvasu do objektu \texttt{ImageData}, čo je pole RGBA hodnôt, aby nad nimi bolo možné vykonať pixelové úpravy.
+    \item \texttt{putImageData()} -- zapíše upravené pixely z~objektu \texttt{ImageData} späť do canvasu.
+\end{itemize} 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Orezávanie}
+
+Orezanie je realizované cez obdĺžnikovú výberovú oblasť definovanú súradnicami \texttt{overlayX}, \texttt{overlayY}, \texttt{overlayW} a~\texttt{overlayH}. Túto oblasť je možné meniť pomocou posúvania bočných a~rohových úchytov. Keďže aj náhľad je možné posúvať a~približovať pomocou knižnice \texttt{panzoom}, panzoom sa dočasne pozastaví volaniami \texttt{pause()} a~\texttt{resume()}, aby sa zabránilo konfliktu medzi manipuláciou s~výberom oblasti orezu a~samotným posúvaním.
+
+Pri rastrových formátoch sa orezanie vykoná vyrezaním zvolenej oblasti z~aktuálneho obrázka do nového \texttt{canvas} pomocou metódy \texttt{drawImage()}. Výsledok sa následne uloží ako \texttt{image/png} cez \texttt{canvas.toDataURL('image/png')}, aby sa zachovala presná veľkosť výstupu v~pixeloch podľa výberu oblasti orezu. Pri PDF dokumentoch orezanie neprebieha pixelovo, ale vytvorením nového PDF dokumentu s~vyrezanou časťou strany pomocou knižnice \texttt{pdf-lib}. Vo~funkcii \texttt{cropToOverlay()} sa pôvodný dokument načíta cez \texttt{PDFDocument.load()} a~vytvorí sa výstupný dokument \texttt{PDFDocument.create()}. Následne sa vybraná oblasť vloží do novej strany cez \texttt{embedPage(srcPage, \{ left, bottom, right, top \})}. Výstupná strana má rozmery orezu a~vložený obsah sa vykreslí na pozícii \((0,0)\) volaním \texttt{drawPage()}.
+
+Pri prevode súradníc overlayu z~canvasového náhľadu do PDF súradníc je potrebné zohľadniť rozdielny počiatok súradnicovej sústavy. Canvas pracuje v~rastrových obrazových súradniciach, kde je \((0,0)\) vľavo hore a~os \(y\) rastie smerom nadol. Naopak, PDF používa stránkové súradnice, kde je \((0,0)\) vľavo dole a~os \(y\) rastie smerom nahor. Preto sa pri výpočte orezávanej oblasti prepočítavajú pomery výberu voči rozmerom canvasu a~os \(y\) sa pri prevode na PDF súradnice otočí.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Orezávanie podľa obsahu}
+
+Orezanie podľa obsahu je implementované vo~funkcii \texttt{previewCropToContent()}. Funkcia najprv získa aktuálny zdrojový \texttt{canvas} pomocou \texttt{getSourceCanvas()}, pričom pri bežnom obrázku ide o~prekreslenie elementu \texttt{img} do pomocného plátna a~pri PDF o~aktuálne zobrazený \texttt{pdfCanvas}. Následne sa určí oblasť spracovania, ktorá zodpovedá buď celej ploche obrázka, alebo aktuálne nastavenej výberovej oblasti.
+
+Z vybranej oblasti sa vytvorí dočasný \texttt{canvas}, nad ktorým sa načítajú obrazové dáta cez \texttt{getImageData()}. Farba pozadia sa odhaduje zo~vzoriek v~štyroch rohoch pomocou pomocnej funkcie \texttt{getAverageColor()}, ktorá pre každý roh vypočíta priemernú farbu a~zároveň zisťuje podiel pixelov s~nízkou alfou. Ak je v~rohoch vysoký podiel transparentných pixelov, algoritmus prejde do režimu založeného na alfa kanáli. V~opačnom prípade sa ako pozadie zvolí rohová farba, ktorá je najviac podobná ostatným rohovým vzorkám. Následne sa od rohov vykoná prehľadávanie oblasti pozadia, pričom sa za pozadie považujú pixely s~nízkou hodnotou alfa kanála alebo pixely s~farbou v~definovanej tolerancii voči odhadnutému pozadiu. Po ukončení prehľadávania sa pomocou funkcií \texttt{isColumnBackground()} a~\texttt{isRowBackground()} určia hranice oblasti, ktorá už nepatrí do pozadia. Výsledná oblasť sa následne zobrazí ako nová orezávacia oblasť volaním \texttt{showOverlay()}. Samotné orezanie sa však vykoná až po potvrdení používateľom tlačidlom \texttt{Apply}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Zmena farby pozadia}
+
+Pomocou funkcie \texttt{detectBackground()} sa odhaduje pôvodná farba pozadia zo~vzoriek na okrajoch obrazu. Pri výpočte sa ignorujú takmer transparentné pixely a~farby sa pred vyhodnotením kvantizujú, aby sa znížil vplyv drobných odchýlok spôsobených šumom alebo kompresiou. Funkcia \texttt{previewBackgroundColor()} slúži iba na náhľad. Ak obrázok neobsahuje alfa kanál, na prefarbenie pozadia v~náhľade sa používa pomocná funkcia \texttt{changeBackgroundColor()}. Ak obrázok priehľadnosť obsahuje alebo bolo pozadie odstránené už skôr, zvolená farba sa zobrazí iba pod náhľadom ako podklad.
+
+Samotná zmena sa vykonáva vo~funkcii \texttt{setBackgroundColor()}. Pri obrázkoch bez alfy sa detegované pozadie prefarbí priamo v~obraze. Pri obrázkoch s~alfa kanálom sa vytvorí nový \texttt{canvas} vyplnený zvolenou farbou a~pôvodný obraz sa naň prekreslí. Tým sa zachová vizuálna podoba pôvodného obsahu, ale priehľadné časti sa doplnia zvolenou farbou pozadia. Pri PDF dokumentoch sa rovnaký postup aplikuje na aktuálne zvolenú stranu. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Odstránenie pozadia}
+
+Odstránenie pozadia je implementované funkciou \texttt{removeBackground()}. Samotné odstránenie zabezpečuje funkcia \texttt{makeBackgroundTransparent(canvas, bgRGB)}, ktorá pracuje s~farbou pozadia odhadnutou funkciou \texttt{detectBackground()}. Z~obrazových dát načítaných pomocou metódy \texttt{getImageData()} sa vytvorí maska pozadia typu \texttt{Uint8Array}. Pixel sa považuje za pozadie, ak má nízku alfu alebo je farebne blízko k~odhadnutej farbe pozadia. Maska sa vytvára prehľadávaním od horného, dolného, ľavého a~pravého okraja, pričom sa šíri iba cez štyroch susedov. Po dokončení prehľadávania sa maska ešte doplní prísnejším farebným prahom a~všetkým pixelom patriacim do pozadia sa nastaví nulová alfa. 
+
+Pri rastrových obrázkoch sa pred spracovaním overí prítomnosť alfa kanála pomocou \texttt{canvasHasAlpha()}. Ak už obrázok priehľadnosť obsahuje, operácia sa nevykoná. Inak sa nad pomocným \texttt{canvasom} použije funkcia \texttt{makeBackgroundTransparent()}, ktorá vytvorí nový náhľad s~priehľadným pozadím. Pri PDF dokumentoch sa postup aplikuje nad rasterizovanou stranou.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Prevod do odtieňov sivej}
+Prevod do odtieňov sivej je implementovaný pomocou niekoľkých funkcií. Na náhľad efektu slúži samostatná funkcia \texttt{previewGrayscale()}. Na aktuálne zobrazený prvok, ktorým je buď \texttt{img}, alebo \texttt{pdfCanvas}, sa nastaví CSS filter \texttt{grayscale(...)}, takže nie je potrebné okamžite prepočítavať obrazové dáta. Funkcia \texttt{endPreviewGrayscale()} tento filter odstráni. Trvalá zmena sa vykonáva vo~funkcii \texttt{applyGrayscale()}. Pri rastrových obrázkoch sa pôvodný obraz najprv prekreslí do dočasného \texttt{canvas} a~následne sa upravia hodnoty v~\texttt{ImageData}. Samotný prepočet pixelov vykonáva pomocná funkcia \texttt{grayscaleCanvas()}, pričom alfa kanál zostáva nezmenený. Rovnaký princíp sa používa aj pri PDF dokumentoch.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Označovanie dôležitých častí a~blur efekt}
+\label{subsec:mark_blur_tools}
+
+Nástroje \emph{Mark} a~\emph{Blur} sú implementované bez externej grafickej knižnice, iba pomocou \texttt{Canvas 2D API} a~Vue Composition API. Pri zapnutí týchto nástrojov sa skryje \texttt{<img>} a~zobrazia sa dve plátna \texttt{editCanvas} a~\texttt{toolCanvas}. Plátno \texttt{editCanvas} obsahuje pracovnú bitmapu v~pôvodnom rozlíšení, \texttt{toolCanvas} zachytáva udalosti \texttt{pointer*} a~slúži na vykresľovanie dočasného náhľadu, ako je kurzor, obrys tvaru a~úchyty. V~oboch nástrojoch sa poloha ukazovateľa prevádza z~CSS súradníc na súradnice plátna vo~funkcii \texttt{getCanvasPosition()}. Prevod vychádza zo~zobrazenej veľkosti plátna a~jeho skutočného rozlíšenia. Pre súradnicu \(x\) sa používa pomer \texttt{toolCanvas.width / rect.width} a~pre súradnicu \(y\) rovnaký princíp s~výškou plátna. Vďaka tomu nástroje fungujú korektne aj pri priblížení a~pri zmene veľkosti zobrazovaného prvku. Oba nástroje používajú na prípravu pracovných plátien spoločnú funkciu \texttt{prepareToolCanvas()}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Označovanie dôležitých častí na obrázku}
+
+V nástroji \emph{Mark} je kreslenie riadené stavovým automatom \texttt{shapeMode} s~režimami \emph{drawing}, \emph{moving} a~\emph{resizing}. Tento stavový automat je zobrazený na obrázku~\ref{fig:mark}. Pri \emph{drawing} sa po stlačení tlačidla uloží počiatočný bod a~počas pohybu sa v~\texttt{drawMarkPreview()} vykresľuje obrys tvaru. Po uvoľnení sa tvar uloží do \texttt{activeShape} a~je možné ho ďalej upraviť ťahaním jedným zo~štyroch rohových úchytov, pomocou ktorých ho vieme zmenšiť alebo zväčšiť. Presun tvaru sa aktivuje v~ohraničujúcom obdĺžniku cez \texttt{hitTestShape()}. Tvar sa do \texttt{editCanvas} zapíše až pri jeho potvrdení, napríklad kliknutím mimo tvaru alebo vypnutím nástroja, pomocou funkcie \texttt{commitActiveShape()}. Následne sa výsledok uloží do náhľadu funkciou \texttt{commitMarkToPreview()}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{obrazky-figures/mark.pdf}
+    \caption{Stavový automat nástroja \texttt{Mark}. Používateľ v~stave \texttt{IDLE} začne kreslenie udalosťou \texttt{pointerdown}, čím sa prepne do \texttt{DRAWING}. Po \texttt{pointerup} sa tvar uloží ako \texttt{activeShape} a~editor prejde do stavu \texttt{SHAPE IDLE}, v~ktorom je možné tvar presúvať (\texttt{MOVING}) alebo meniť jeho veľkosť cez rohové úchyty (\texttt{RESIZING}). Klik mimo tvaru (\texttt{pointerdown outside}) potvrdí aktuálny tvar a~spustí kreslenie nového.}
+    \label{fig:mark}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsubsection{Blur efekt} 
+\label{subsec_blur}
+
+Pri zapnutí blur nástroja sa \texttt{editCanvas} zosynchronizuje so~zdrojovým obsahom pomocou funkcie \texttt{prepareBlurCanvas()}, ktorá využíva spoločnú funkciu \texttt{prepareToolCanvas()}. Tá nastaví rozmery pracovných plátien podľa zdroja a~prekreslí do nich aktuálny obrázok alebo rasterizovanú PDF stranu. Parametre nástroja sú polomer štetca \texttt{blurRadius} a~intenzita rozmazania v~pixeloch \texttt{blurIntensity}. Samotné rozmazanie jednej pozície vykonáva funkcia \texttt{applyBlur()}. Najprv vytvorí kruhovú orezovú oblasť pomocou \texttt{clip()}, potom nastaví rozmazanie cez vlastnosť \texttt{context.filter}. Hodnota filtra je \texttt{blur(\dots)} a~určuje intenzitu rozmazania v~pixeloch. Nakoniec sa \texttt{editCanvas} prekreslí sám do seba, takže rozmazanie sa aplikuje iba vo~vnútri kruhu.
+
+Interakcia je riadená udalosťami \texttt{pointerdown}, \texttt{pointermove} a~\texttt{pointerup}. Počas pohybu kurzora sa používa \texttt{requestAnimationFrame()}, takže vykresľovanie prebieha najviac raz za snímku. Tým sa zníži počet prekreslení a~správanie nástroja je plynulé. Ak je vzdialenosť medzi dvoma po sebe spracovanými pozíciami väčšia, funkcia \texttt{applyBlurAt()} doplní medzibody, aby rozmazanie nevznikalo ako séria oddelených kruhov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Detekcia JPEG artefaktov}
+
+Detekcia JPEG artefaktov je implementovaná vo~funkcii \texttt{highlightJpegArtifacts()}. Funkcia najprv získa aktuálny zdrojový \texttt{canvas} a~načíta jeho obrazové dáta. Z~nich sa pomocou \texttt{applyBilateralFilter()} vytvorí jemne vyhladená verzia obrazu a~zo zdrojových pixelov sa zároveň vypočíta jasová zložka. Nad jasom sa následne pomocou \texttt{sobelGradient()} vytvorí mapa gradientu. Podľa dvoch prahov sa určia pixely v~okolí hrán a~pixely patriace medzi výrazné hrany obrazu. Jednotlivé medzikroky detekcie sú znázornené na obrázku~\ref{fig:jpeg_detection_pipeline}.
+
+\begin{figure}[!t]
+    \centering
+
+    \setlength{\fboxsep}{0pt}
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[height=0.32\textheight, keepaspectratio]{obrazky-figures/original_1.png}}
+        \par\smallskip
+        {\small Pôvodný obraz}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[height=0.32\textheight, keepaspectratio]{obrazky-figures/bilateral_2.png}}
+        \par\smallskip
+        {\small Bilaterálne vyhladenie}
+    \end{minipage}
+    \hfill
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[height=0.32\textheight, keepaspectratio]{obrazky-figures/diff_3.png}}
+        \par\smallskip
+        {\small Rozdiel obrazu}
+    \end{minipage}
+
+    \vspace{0.5cm}
+
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[height=0.32\textheight, keepaspectratio]{obrazky-figures/edges_4.png}}
+        \par\smallskip
+        {\small Mapa hrán}
+    \end{minipage}
+    \hspace{0.08\textwidth}
+    \begin{minipage}{0.32\textwidth}
+        \centering
+        \fbox{\includegraphics[height=0.32\textheight, keepaspectratio]{obrazky-figures/mask_5.png}}
+        \par\smallskip
+        {\small Výsledné označenie}
+    \end{minipage}
+
+    \caption{Postup detekcie JPEG artefaktov v~aplikácii. Z~pôvodného obrazu sa najprv vytvorí bilaterálne vyhladená verzia. Následne sa vypočíta rozdiel medzi pôvodným a~vyhladeným obrazom a~samostatne sa vytvorí mapa hrán. Kombináciou týchto informácií vznikne výsledná maska, ktorá označuje oblasti považované za podozrivé JPEG artefakty.}
+    \label{fig:jpeg_detection_pipeline}
+\end{figure}
+
+Pre každý pixel sa potom vypočíta priemerná farebná odchýlka medzi pôvodným a~vyhladeným obrazom. Pixel sa označí ako podozrivý artefakt, ak je táto odchýlka väčšia než zvolený prah, zároveň leží v~okolí hrany, nepatrí medzi silné hrany a~jeho gradient neprekračuje dodatočný limit. V~aktuálnej implementácii sa pri použití nástroja nastavujú hodnoty \texttt{diffThresh = 1}, \texttt{lowEdge = 40}, \texttt{highEdge = 160} a~\texttt{gradLimit = 120}. Tieto hodnoty boli zvolené podľa porovnania výsledkov, aby nástroj zachytil hlavne rušivé odchýlky v~okolí hrán a~zároveň neoznačoval príliš veľa bežných častí obrazu. Takto vzniknutá maska sa vykreslí do \texttt{markCanvas} zvolenou farbou.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Potlačenie JPEG artefaktov}
+
+Potlačenie artefaktov je implementované vo~funkcii \texttt{fixJpegArtifacts()}. Funkcia najprv získa aktuálny obrázok z~\texttt{imgEl}, vytvorí pomocný \texttt{canvas} v~jeho pôvodnom rozlíšení a~prekreslí doň zdrojový obraz. V~prvom kroku sa nad obrazovými dátami vykoná bilaterálne vyhladenie pomocou funkcie \texttt{bilateralFilterImageData()}. Implementácia používa okolie s~polomerom \(4\) pixely, parameter priestorovej vzdialenosti \(4\) a~parameter farebnej podobnosti \(60\). Priestorová aj farebná váha sa počítajú priamo vo~vnorených cykloch nad susednými pixelmi. Okrajové pixely, na ktoré sa filter neuplatní, sa ponechajú bez zmeny. Takto vznikne vyhladená verzia obrazu.
+
+V~ďalšom kroku sa nad vyhladeným obrazom použije funkcia \texttt{unsharpMask()}, ktorá vo~vnútri použije Gaussov filter pomocou funkcie \texttt{gaussianBlur()}. Následne sa vypočíta rozdiel medzi vyhladeným obrazom a~obrazom po použití Gaussovho filtra a~tento detail sa s~koeficientom doostrenia \(1.5\) pripočíta späť k~vyhladenému obrazu. Tým sa dosiahne mierne doostrenie výsledku. Upravený obraz sa nakoniec zapíše späť do pomocného \texttt{canvas} a~uloží sa do náhľadu.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Export súboru}
+
+Aplikácia používa funkciu \texttt{prepareExport(\{ format \})}, ktorá pripraví výsledný \texttt{Blob} a~zároveň vráti aj odhad jeho veľkosti pre používateľské rozhranie, čo sa zobrazuje v~exportnom paneli. Export vychádza z~aktuálneho stavu náhľadu. Ak je definovaná výberová oblasť orezom, exportuje sa iba táto časť, inak sa exportuje celý obsah. Zjednodušený priebeh exportu je znázornený na obrázku~\ref{fig:export_flow}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{obrazky-figures/export.pdf}
+    \caption{Schéma exportu súboru v~aplikácii. Export vychádza z~aktuálneho náhľadu alebo z~vybranej oblasti a~následne sa vetví podľa zvoleného výstupného formátu. Jednotlivé vetvy sa na konci spoja pri vytvorení objektu \texttt{Blob}, z~ktorého sa pripraví dočasná URL a~spustí sa stiahnutie výsledného súboru.}
+    \label{fig:export_flow}
+\end{figure}
+
+Pre PNG a~JPEG sa výsledok prekreslí do dočasného \texttt{canvas} a~prevedie na \texttt{Blob} pomocou helperu \texttt{canvasToBlob()}. Export do PDF je realizovaný knižnicou \texttt{pdf-lib}. Pri exporte obrázka do PDF sa vytvorí nový dokument a~vloží sa doň rastrový obraz. Pri exporte PDF do PDF sa použije výrez strany pomocou \texttt{embedPage()} a~následne sa vykreslí volaním \texttt{drawPage()}. Samotné stiahnutie súboru zabezpečuje komponent \texttt{Editor.vue}, ktorý vytvorí dočasnú URL a~následne simuluje kliknutie na prvok \texttt{<a>} s~atribútom \texttt{download}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Kalibrácia a~práca s~mierkou}
+
+Aplikácia pracuje s~hodnotou \texttt{screenDPI}, ktorá reprezentuje počet CSS pixelov na palec v~aktuálnom zobrazení. Ak kalibrácia ešte nie je nastavená, počiatočný odhad sa vykoná vo~funkcii \texttt{measureCssDpi()} pomocou skrytého prvku so~šírkou \texttt{1in}.
+
+Pri metóde s~pravítkom sa používa funkcia \texttt{measureCalibrationLine()}, ktorá zmeria šírku kalibračnej čiary. Výsledná hodnota sa následne uloží pomocou \texttt{applyCalibration()}. Druhá metóda je implementovaná vo~funkcii \texttt{applyCardCalibration()}, kde sa vychádza zo~šírky zobrazeného obrázka kreditnej karty. Kalibračné údaje aj referenčná šírka obsahu sa ukladajú do \texttt{localStorage}, aby zostali zachované aj po obnovení stránky.
+
+Pri zmene priblíženia stránky alebo veľkosti okna sa kalibrácia obnovuje vo~funkcii \texttt{updateCalibratedDpi()}, ktorá využíva aktuálny faktor priblíženia prehliadača. Po každej zmene sa znovu prepočíta zobrazovaná mierka v~používateľskom rozhraní. Po aplikovaní kalibrácie sa výsledné zobrazenie upraví pomocou knižnice \texttt{panzoom}, pričom cieľová mierka sa nastaví volaním \texttt{zoomAbs()} okolo stredu kontajnera \texttt{canvasWrapper}. Tým sa zabezpečí, že po kalibrácii bude referenčná šírka zodpovedať hodnote \(100\,\%\) v~rozhraní.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Logovanie aktivity používateľov}
+
+Každé použitie aplikácie sa priraďuje k~identifikátoru \texttt{sessionId}. Funkcia \texttt{startSession()} sa najprv pokúsi načítať identifikátor z~cookie \texttt{analytics\_session\_id}. Ak cookie neexistuje, vygeneruje sa nové UUID cez \texttt{crypto.randomUUID()}, prípadne pomocou fallbacku využívajúceho \texttt{crypto.getRandomValues()}.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Zber údajov používania aplikácie}
+
+Udalosti sa zbierajú dvoma spôsobmi. V~editore sa udržiava lokálne pole \texttt{actionsPerformed}, do ktorého sa cez \texttt{recordAction()} ukladajú záznamy v~tvare \texttt{\{t: <typ\_akcie>, \dots\}}. Ide napríklad o~akcie \texttt{remove\_background}, \texttt{bgcolor\_apply}, \texttt{grayscale\_apply} alebo \texttt{export}, kde sa zaznamenáva aj \texttt{format} a~veľkosť výstupu v~bajtoch. Do logu sa ukladá čas relácie v~poli \texttt{timestamp}.
+
+Odosielanie prebieha pri ukončení návštevy funkciou \texttt{endSession()}. Editor ju volá po úspešnom exporte v~\texttt{exportFile()} a~odovzdá zoznam lokálne nazbieraných udalostí v~premennej \texttt{actionsPerformed}. Funkcia \texttt{endSession()} spojí interné a~odovzdané udalosti a~odošle JSON objekt so~zložkami \texttt{session\_id} a~\texttt{actions} na definovaný endpoint. Odoslanie je realizované pomocou \texttt{navigator.sendBeacon()}, prípadne fallbackom cez \texttt{fetch()} s~voľbou \texttt{keepalive}. Ak je zoznam udalostí prázdny, nič sa neposiela.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Vyhodnotenie zozbieraných štatistík}
+
+Vyhodnotenie zozbieraných štatistík je realizované Python skriptom. Skript načíta NDJSON súbor po riadkoch pomocou \texttt{json.loads()} a~vytvorí \texttt{pandas.DataFrame}. Pole \texttt{actions} následne rozbalí na jednotlivé riadky cez \texttt{DataFrame.explode()}, takže každá akcia sa dá jednoducho agregovať. V~časti pre graf typov akcií sa pri počítaní zámerne vynecháva typ \texttt{export}. Výstupom sú grafy generované knižnicami \texttt{matplotlib} a~\texttt{numpy}:
+\begin{itemize}
+    \item \texttt{actions\_types.png} – graf počtu udalostí podľa typu akcie.
+    \item \texttt{actions\_per\_session.png} – histogram počtu udalostí na jednu reláciu.
+    \item \texttt{users\_per\_month.png} – graf počtu unikátnych používateľov za mesiac pomocou \texttt{session\_id}.
+\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Produkčné nasadenie aplikácie}
+
+Aplikácia je nasadená na GitHub Pages a~je dostupná ako verejná webová aplikácia na adrese \url{https://peterhunady.github.io/pictura/}. Produkčná verzia sa vytvára príkazom \texttt{npm run build}, ktorý spustí zostavenie aplikácie pomocou nástroja \texttt{Vite}. Výsledné súbory sa ukladajú do adresára \texttt{docs/}. Keďže aplikácia beží v~podceste \texttt{/pictura/}, je táto cesta nastavená aj v~konfigurácii Vite.
+
+Aplikácia používa Vue Router v~režime \texttt{history}. Aby fungovalo aj priame otvorenie podstránok, po zostavení sa súbor \texttt{index.html} skopíruje aj ako \texttt{404.html}. Vďaka tomu GitHub Pages pri neznámej adrese načíta aplikáciu a~router následne zobrazí správnu stránku. Nasadenie je automatizované cez GitHub Actions. Po každom odoslaní zmien do vetvy \texttt{main} sa nainštalujú závislosti, vytvorí sa produkčná zostava a~obsah adresára \texttt{docs/} sa publikuje na GitHub Pages.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Testovanie a~vyhodnotenie}
+\label{chap_testovanie}
+
+Cieľom tejto kapitoly je overiť, že aplikácia spĺňa požiadavky definované v~kapitole~\ref{chap_navrh} a~že sa dá v~praxi používať na typické úpravy obrázkov a~PDF dokumentov pri príprave záverečných prác. Najprv prebehlo jednoduché používateľské testovanie s~menšou skupinou používateľov, pri ktorom sa sledovalo, či dokážu aplikáciu ovládať samostatne. Následne prebehlo funkčné testovanie na reálnych vstupoch. Použité boli obrázky a~PDF dokumenty priamo zo~záverečných prác, pričom sa overovalo správanie jednotlivých nástrojov a~kvalita ich výstupov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Používateľské testovanie}
+\label{sec:user_testing}
+
+Používateľské testovanie prebehlo s~približne dvanástimi ľuďmi, najmä so~spolužiakmi a~známymi. Testujúci si aplikáciu vyskúšali bez predchádzajúceho vysvetlenia jej ovládania. Cieľom bolo overiť, či používatelia pochopia základné ovládanie aplikácie a~či sa vedia dostať k~požadovanému výsledku bez dodatočného vysvetľovania. Počas testovania boli sledované najmä tieto body:
+\begin{itemize}
+    \item či sa používateľ vie zorientovať v~hlavnom rozložení editora,
+    \item či pochopí význam bočného panelu a~jednotlivých editačných nástrojov ešte pred ich použitím,
+    \item či rozumie ovládaniu konkrétnych nástrojov,
+    \item či chápe význam ovládacích prvkov v~hornom paneli, napríklad krok späť, opakovanie akcie, reset, mierku zobrazenia a~kalibráciu,
+    \item či rozlišuje medzi posúvaním alebo približovaním náhľadu a~samotnou úpravou obsahu,
+    \item či pochopí rozdiel medzi priebežným náhľadom úpravy a~jej trvalým aplikovaním,
+    \item či vie samostatne dokončiť typickú úlohu, napríklad orezať obrázok, zmeniť pozadie, zakryť citlivý údaj a~exportovať výsledok.
+\end{itemize}
+
+Spätná väzba bola zbieraná dvoma spôsobmi. Počas práce sa zaznamenávali miesta, kde sa testujúci zastavili alebo očakávali iné správanie aplikácie. Po skončení testovania nasledoval krátky rozhovor, v~ktorom testujúci popísali, čo im prišlo jasné a~čo by uvítali zmeniť. Týkalo sa to najmä pomenovania tlačidiel, usporiadania nástrojov a~zrozumiteľnosti ich ovládania. Ak sa počas testovania objavil problém, pri ktorom niektorá funkcia prestala správne fungovať, rovnaký vstup bol použitý aj pri oprave chyby.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Funkčné testovanie na reálnych vstupoch}
+\label{sec:functional_testing}
+
+Funkčné testovanie bolo zamerané na overenie konkrétnych nástrojov aplikácie na vstupoch, ktoré zodpovedajú typickým príkladom z~bakalárskych prác. Išlo najmä o~screenshoty, obrázky s~jednofarebným pozadím, komprimované JPEG obrázky s~viditeľnými artefaktmi a~PDF dokumenty. Použité obrázky a~dokumenty boli zaradené do testovania so~súhlasom ich autorov. Pri každom teste bol postup rovnaký. Najprv sa použil reálny vstup, následne sa vykonala konkrétna úprava alebo kombinácia úprav a~nakoniec sa skontrolovalo, či výsledok spĺňa očakávania. V~tejto časti sú uvedené najmä ukážky pred a~po úprave, ktoré zároveň slúžia ako praktická ukážka správania jednotlivých nástrojov.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Orezanie podľa obsahu}
+\label{subsec:test_crop}
+
+Pri testovaní orezania podľa obsahu boli použité obrázky s~nadbytočnými okrajmi okolo hlavného obsahu. Sledovalo sa, či aplikácia dokáže automaticky navrhnúť orezávaciu oblasť tak, aby bol zachovaný hlavný obsah a~zároveň sa odstránila väčšina prázdneho priestoru okolo neho. Obrázok~\ref{fig:test_crop_to_content} ukazuje pôvodný vstup a~oblasť, ktorú aplikácia navrhla na orezanie.
+
+\begin{figure}[t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/crop_before.png}}
+    \hfill
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/crop_after.png}}
+    \caption{Ukážka automatického orezania podľa obsahu. Pôvodný obrázok pochádza z~bakalárskej práce Vladislava Kaderkina. Vpravo je screenshot z~aplikácie, na ktorom je zobrazená automaticky navrhnutá oblasť orezu pred jej potvrdením používateľom.}
+    \label{fig:test_crop_to_content}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Zmena farby pozadia}
+\label{subsec:test_background}
+
+Pri testovaní úprav pozadia boli použité obrázky s~jednoduchým, prevažne jednofarebným pozadím. Overovalo sa, či aplikácia dokáže nahradiť pôvodné pozadie zvolenou farbou. Ukážka zmeny farby pozadia je uvedená na obrázku~\ref{fig:test_bgcolor}.
+
+\begin{figure}[t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \includegraphics[width=0.8\textwidth]{obrazky-figures/background_color_before.png}
+    \par\nointerlineskip\vspace{2mm}
+    \fbox{\includegraphics[width=0.8\textwidth]{obrazky-figures/background_color_after.png}}
+    \caption{Ukážka zmeny farby pozadia. Pôvodný obrázok pochádza z~bakalárskej práce Jakuba Ráčka. Hore je pôvodný obrázok s~pôvodným pozadím, dole je výsledok po nahradení pozadia zvolenou farbou.}
+    \label{fig:test_bgcolor}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Prevod do odtieňov sivej}
+\label{subsec:test_grayscale}
+
+Prevod do odtieňov sivej bol testovaný na farebných obrázkoch s~viacerými vizuálnymi prvkami. Sledovalo sa, či po úprave zostane obsah obrázka čitateľný a~či sa zachová dostatočný kontrast medzi jednotlivými časťami obrazu. Výsledok testovania je zobrazený na obrázku~\ref{fig:test_grayscale}.
+
+\begin{figure}[t]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/grayscale_before.png}}
+    \hfill
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/grayscale_after.png}}
+    \caption{Ukážka prevodu do odtieňov sivej. Pôvodný obrázok pochádza z~bakalárskej práce Michala Blažeka. Vľavo je pôvodný farebný obrázok, vpravo je výsledok po aplikovaní úpravy.}
+    \label{fig:test_grayscale}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Označovanie a~rozmazanie citlivých údajov}
+\label{subsec:test_mark_blur}
+
+Pri označovaní sa testovalo, či je možné zvýrazniť zvolenú časť obrázka a~či označenie zostane viditeľné aj vo~výslednom výstupe. Pri rozmazaní sa sledovalo, či sa úprava aplikuje iba na vybranú časť obrázka a~či zvyšok obsahu zostane bez zmeny. Výsledok testu označovania je uvedený na obrázku~\ref{fig:test_mark}. Výsledok testu rozmazania vybranej oblasti je uvedený na obrázku~\ref{fig:test_blur}.
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.49\textwidth]{obrazky-figures/mark_before.png}
+    \hfill
+    \includegraphics[width=0.49\textwidth]{obrazky-figures/mark_after.png}
+    \caption{Ukážka označenia časti obrázka. Pôvodný obrázok pochádza z~bakalárskej práce Tomáša Bražinu. Vľavo je pôvodný obrázok, vpravo je výsledok po zvýraznení vybranej oblasti.}
+    \label{fig:test_mark}
+\end{figure}
+
+\begin{figure}[!htbp]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.9\textwidth]{obrazky-figures/blur_before.png}}
+    \par\nointerlineskip\vspace{2mm}
+    \fbox{\includegraphics[width=0.9\textwidth]{obrazky-figures/blur_after.png}}
+    \caption{Ukážka rozmazania vybranej oblasti. Pôvodný obrázok pochádza z~bakalárskej práce Jana Zádrapu. Hore je pôvodný obrázok s~odkrytými heslami, dole je výsledok po ich zakrytí pomocou rozmazania.}
+    \label{fig:test_blur}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Detekcia a~potlačenie JPEG artefaktov}
+\label{subsec:test_jpeg}
+
+Detekcia a~potlačenie JPEG artefaktov boli testované na obrázkoch so~silnejšou kompresiou, pri ktorých boli viditeľné rušivé zmeny v~okolí hrán alebo v~plochách s~plynulými prechodmi. Pri detekcii sa sledovalo, či aplikácia zvýrazní najmä oblasti, kde sa artefakty prejavujú najvýraznejšie. Pri potlačení artefaktov sa hodnotilo, či sa rušivé zmeny zmiernia bez výraznej straty detailov a~bez neprirodzeného vzhľadu výsledného obrázka. Ukážka zvýraznenia artefaktov je uvedená na obrázku~\ref{fig:test_jpeg_highlight}. Výsledok po potlačení artefaktov je uvedený na obrázku~\ref{fig:test_jpeg_fix}.
+
+\begin{figure}[!htbp]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/artefacts_before.jpg}}
+    \hfill
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/artefacts_highlight.png}}
+    \caption{Ukážka zvýraznenia pravdepodobných JPEG artefaktov. Pôvodný obrázok pochádza z~bakalárskej práce Radka Holoubka. Vľavo je pôvodný obrázok, vpravo je screenshot z~aplikácie po zvýraznení oblastí, ktoré boli vyhodnotené ako pravdepodobné artefakty.}
+    \label{fig:test_jpeg_highlight}
+\end{figure}
+
+\begin{figure}[!htbp]
+    \centering
+    \setlength{\fboxsep}{0pt}
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/artefacts_before.jpg}}
+    \hfill
+    \fbox{\includegraphics[width=0.49\textwidth]{obrazky-figures/artefacts_after.jpg}}
+    \caption{Ukážka potlačenia JPEG artefaktov. Pôvodný obrázok pochádza z~bakalárskej práce Radka Holoubka. Vľavo je pôvodný obrázok s~viditeľnými kompresnými artefaktmi, vpravo je výsledok po ich potlačení.}
+    \label{fig:test_jpeg_fix}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Obmedzenia riešenia a~možné zlepšenia}
+\label{sec:test_summary}
+
+Funkčné testovanie ukázalo, že aplikácia pokrýva typické úlohy, ktoré sa pri príprave obrázkov do záverečnej práce opakujú. Pri jednoduchších vstupoch boli výsledky použiteľné bez potreby ďalších úprav v~externom editore. Zároveň sa ukázalo, že niektoré nástroje majú svoje obmedzenia. Najviac sa to prejavuje pri operáciách, ktoré závisia od správneho rozpoznania obsahu obrázka. Ide najmä o~odstránenie pozadia a~detekciu alebo potlačenie JPEG artefaktov. Odstránenie pozadia funguje lepšie pri obrázkoch, kde je pozadie jednofarebné a~jasne oddelené od hlavného obsahu. Horšie výsledky sa môžu objaviť vtedy, keď má pozadie podobnú farbu ako hlavný obsah alebo keď sa na okrajoch objektu nachádzajú jemné farebné prechody. Podobné obmedzenie sa objavuje aj pri JPEG artefaktoch. Niektoré drobné zmeny spôsobené kompresiou sa môžu vizuálne podobať skutočným detailom v~obraze, preto ich nie je vždy možné spoľahlivo rozlíšiť iba na základe lokálnych rozdielov medzi pixelmi.
+
+Tieto časti by bolo možné v~budúcnosti zlepšiť použitím pokročilejších metód založených na strojovom učení. Pri odstránení pozadia by takýto prístup mohol presnejšie oddeliť hlavný objekt od pozadia aj v~zložitejších prípadoch. Pri JPEG artefaktoch by sa mohol použiť model trénovaný na obnovu komprimovaných obrázkov, ktorý by vedel lepšie potlačiť rušivé zmeny bez poškodenia detailov. Takéto riešenie by však bolo technicky náročnejšie a~pravdepodobne by vyžadovalo buď väčší výpočtový výkon v~prehliadači, alebo serverové spracovanie.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Spätná väzba a~vyhodnotenie používania aplikácie}
+\label{sec:analytics_feedback}
+
+Okrem používateľského a~funkčného testovania bolo vyhodnotené aj reálne používanie aplikácie. Cieľom bolo získať základný prehľad o~tom, ako používatelia s~aplikáciou pracovali, koľko krokov typicky vykonali a~ktoré nástroje používali najčastejšie. Vyhodnotenie vychádzalo z~anonymizovaných záznamov používania, ktoré boli následne spracované do grafov. Aplikácia bola po nasadení zdieľaná aj na školskom Discorde, kde si ju mohli vyskúšať ďalší študenti. Spätná väzba prichádzala priebežne najmä cez správy a~týkala sa hlavne menších chýb a~návrhov na úpravu niektorých nástrojov. Zistené problémy boli následne overené a~podľa potreby opravené.
+
+Analyzované dáta obsahovali 409 zaznamenaných relácií a~73 unikátnych používateľských identifikátorov. Celkovo bolo zaznamenaných 1267 akcií, pričom priemerný počet akcií na jednu reláciu bol približne 3{,}1. To naznačuje, že aplikácia bola používaná najmä na kratšie úpravy, pri ktorých používateľ vykonal niekoľko konkrétnych krokov a~následne výsledok exportoval. Najvyšší počet unikátnych používateľských identifikátorov bol zaznamenaný v~apríli, a~to 48. Tento nárast pravdepodobne súvisí s~tým, že v~tomto období sa už viac študentov venovalo príprave textu a~obrázkov do záverečných prác. Rozdelenie počtu akcií na reláciu je zobrazené na obrázku~\ref{fig:actions_per_session}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\textwidth]{obrazky-figures/actions_per_session.png}
+    \caption{Počet zaznamenaných akcií na jednu reláciu. Graf ukazuje, koľko krokov používatelia typicky vykonali počas jednej práce s~aplikáciou. Väčšina relácií obsahuje len niekoľko akcií, čo zodpovedá zameraniu aplikácie na rýchle úpravy obrázkov.}
+    \label{fig:actions_per_session}
+\end{figure}
+
+Z~porovnania jednotlivých typov akcií vyplýva, že najčastejšie sa používali najmä nástroje určené na rýchlu prípravu obrázka pred vložením do textu, predovšetkým orezanie podľa obsahu, odstránenie pozadia, zmena farby pozadia a~zmena výstupného formátu. Počet použití jednotlivých nástrojov je uvedený na obrázku~\ref{fig:actions_types}. Menej často sa v~záznamoch objavovali špecifickejšie nástroje, napríklad označovanie častí obrázka, rozmazanie alebo kalibrácia. Tento výsledok bol očakávaný, pretože tieto funkcie sa používajú skôr pri konkrétnych situáciách, zatiaľ čo orezanie, úprava pozadia a~zmena výstupného formátu patria medzi základné operácie pri väčšine úprav.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\textwidth]{obrazky-figures/actions_types.png}
+    \caption{Počet použití jednotlivých nástrojov aplikácie. Graf porovnáva zaznamenané akcie podľa ich typu a~ukazuje, ktoré úpravy boli pri práci s~aplikáciou využívané najčastejšie.}
+    \label{fig:actions_types}
+\end{figure}
+
+Z~časového hľadiska boli dáta rozdelené podľa mesiacov. Mesačný vývoj počtu unikátnych používateľských identifikátorov je zobrazený na obrázku~\ref{fig:monthly_activity}. Vyššia aktivita v~januári pravdepodobne súvisí so~zdieľaním aplikácie na školskom Discorde. Vo~februári počet používateľských identifikátorov klesol, čo môže súvisieť s~tým, že študenti v~tomto období ešte riešili skôr praktickú časť práce než finálne písanie a~prípravu obrázkov do textu. V~ďalších mesiacoch aktivita postupne rástla a~najvyššia bola zaznamenaná v~apríli, čo pravdepodobne súvisí s~blížiacim sa termínom odovzdávania záverečných prác.
+
+\begin{figure}[t]
+    \includegraphics[width=1\textwidth]{obrazky-figures/users_per_month.png}
+    \caption{Počet unikátnych používateľov v~jednotlivých mesiacoch. Graf ukazuje vývoj používania aplikácie po jej zdieľaní a~nasadení. Vyššia aktivita v~januári súvisí najmä so~zdieľaním aplikácie na školskom Discorde, zatiaľ čo postupný nárast v~marci a~apríli pravdepodobne súvisí s~blížiacim sa termínom odovzdávania záverečných prác.}
+    \label{fig:monthly_activity}
+\end{figure}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\chapter{Záver}
+\label{chap_zaver}
+
+Cieľom tejto práce bolo navrhnúť, implementovať a~otestovať webovú aplikáciu určenú na rýchlu úpravu obrázkov a~PDF dokumentov pri príprave bakalárskych a~diplomových prác. V~úvodnej časti práce boli popísané základné princípy spracovania digitálneho obrazu, práca s~obrazovými dátami v~prehliadači a~rasterizácia PDF dokumentov. Následne boli porovnané vybrané existujúce webové nástroje, pričom sa ukázalo, že väčšina z~nich pokrýva iba časť požadovaných úprav alebo je pre jednoduché opakované úlohy zbytočne zložitá. Po analýze nasledoval návrh aplikácie, používateľského rozhrania a~jednotlivých editačných nástrojov. Pri návrhu bolo dôležité najmä jednoduché ovládanie, spracovanie súborov priamo v~prehliadači a~podobný postup práce pri obrázkoch aj PDF dokumentoch.
+
+Implementácia bola vytvorená ako single-page aplikácia vo~frameworku Vue~3. Na obrazové úpravy bolo použité Canvas API, na prácu s~PDF dokumentmi knižnice \texttt{pdfjs-dist} a~\texttt{pdf-lib}. Výsledkom práce je webová aplikácia, ktorá spája základné úpravy obrázkov a~PDF dokumentov do jedného jednoduchého prostredia. Používateľ v~nej môže vykonať napríklad orezanie, úpravu pozadia, zakrytie citlivých údajov a~export výsledku do vhodného formátu. Aplikácia zároveň ukladá anonymné záznamy o~používaní nástrojov, z~ktorých sa následne dajú vytvoriť základné štatistiky. Aplikácia je nasadená na GitHub Pages a~je dostupná na adrese \url{https://peterhunady.github.io/pictura/}.
+
+Aplikácia bola overená používateľským aj funkčným testovaním na reálnych vstupoch. Testovanie ukázalo, že aplikácia je použiteľná na typické úpravy obrázkov pri príprave záverečných prác a~že používatelia sa v~nej vedia zorientovať. Zároveň sa potvrdilo, že niektoré nástroje majú určité obmedzenia. Ide najmä o~odstránenie pozadia a~detekciu alebo potlačenie JPEG artefaktov, kde výsledok závisí od vlastností konkrétneho obrázka. Do budúcnosti by bolo možné aplikáciu rozšíriť najmä o~pokročilejšie metódy spracovania obrazu. Pri odstránení pozadia a~potlačení JPEG artefaktov by sa mohli použiť metódy založené na strojovom učení, ktoré by lepšie zvládali zložitejšie vstupy. Aj napriek týmto obmedzeniam aplikácia spĺňa hlavný cieľ práce. Poskytuje jednoduchý nástroj, ktorý môže študentom uľahčiť opakované úpravy obrázkov priamo v~prehliadači.

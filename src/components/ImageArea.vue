@@ -80,6 +80,10 @@
       </div>
     </div>
 
+    <div v-if="isBusy" class="busy-overlay" :style="{ paddingRight: rightGap, paddingTop: topGap }">
+      <div class="busy-spinner"></div>
+    </div>
+
     <input
       type="file"
       ref="fileInput"
@@ -200,6 +204,7 @@
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
   const { getDocument } = pdfjsLib
   const preview = ref(null)
+  const isBusy = ref(false)
   const originalPdf  = ref(null)
   const originalFileName = ref('')
   const originalFileSize = ref(0)
@@ -672,7 +677,14 @@
     pushHistory,
     preview,
     emit,
-    imgEl
+    imgEl,
+    isPdf,
+    pdfBytes,
+    originalPdf,
+    originalFileSize,
+    originalLastModified,
+    currentPage,
+    renderPdfPage,
   })
 
   const {
@@ -780,13 +792,13 @@
 
         const file = new File([blob], `pasted-image-${Date.now()}.png`, { type: blob.type })
         isPdf.value = false
-        loadImage(file)
+        withBusy(() => loadImage(file))
         break
       }
     }
   }
 
-  function handleFileChange(e) {
+  async function handleFileChange(e) {
     const file = e.target.files[0]
     if (!file) {
       return
@@ -797,16 +809,11 @@
       return
     }
 
-    if (file.type === 'application/pdf') {
-      isPdf.value = true
-      loadPdf(file)
-    } else {
-      isPdf.value = false
-      loadImage(file)
-    }
+    isPdf.value = file.type === 'application/pdf'
+    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
   }
 
-  function handleDrop(e) {
+  async function handleDrop(e) {
     const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/') || f.type === 'application/pdf')
 
     if (!file) {
@@ -817,13 +824,8 @@
       return
     }
 
-    if (file.type === 'application/pdf') {
-      isPdf.value = true
-      loadPdf(file)
-    } else {
-      isPdf.value = false
-      loadImage(file)
-    }
+    isPdf.value = file.type === 'application/pdf'
+    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
   }
 
   async function loadExternalFile(file) {
@@ -831,52 +833,49 @@
       return
     }
 
-    if (file.type === 'application/pdf') {
-      isPdf.value = true
-      await loadPdf(file)
-
-    } else {
-      isPdf.value = false
-      loadImage(file)
-    }
+    isPdf.value = file.type === 'application/pdf'
+    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
   }
 
   function loadImage(file) {
-    originalFileName.value = file.name
-    originalFileType.value = file.type
-    originalFileSize.value = file.size
-    originalLastModified.value = file.lastModified || Date.now()
-    const reader = new FileReader()
+    return new Promise((resolve) => {
+      originalFileName.value = file.name
+      originalFileType.value = file.type
+      originalFileSize.value = file.size
+      originalLastModified.value = file.lastModified || Date.now()
+      const reader = new FileReader()
 
-    reader.onload = event => {
-      preview.value = event.target.result
-      emit('update:preview', preview.value)
-      const img = new Image()
-      img.src = preview.value
+      reader.onload = event => {
+        preview.value = event.target.result
+        emit('update:preview', preview.value)
+        const img = new Image()
+        img.src = preview.value
 
-      img.onload = () => {
-        emit('update:meta', {
-          name: file.name, type: file.type, size: file.size,
-          width: img.naturalWidth, height: img.naturalHeight,
-          lastModified: file.lastModified
-        })
-        setupOverlay(img.naturalWidth, img.naturalHeight)
+        img.onload = () => {
+          emit('update:meta', {
+            name: file.name, type: file.type, size: file.size,
+            width: img.naturalWidth, height: img.naturalHeight,
+            lastModified: file.lastModified
+          })
+          setupOverlay(img.naturalWidth, img.naturalHeight)
 
-        imgTransparent.value = false
-        const isAlpha = hasAlphaImage(img)
-        checkerOn.value = isAlpha
-        setHasAlpha(isAlpha)
+          imgTransparent.value = false
+          const isAlpha = hasAlphaImage(img)
+          checkerOn.value = isAlpha
+          setHasAlpha(isAlpha)
 
-        if (!isAlpha) {
-          detectBackground()
-        } else {
-          emit('update:bgcolor', null)
+          if (!isAlpha) {
+            detectBackground()
+          } else {
+            emit('update:bgcolor', null)
+          }
+
+          saveOriginalSnapshot()
+          resolve()
         }
-
-        saveOriginalSnapshot()
       }
-    }
-    reader.readAsDataURL(file)
+      reader.readAsDataURL(file)
+    })
   }
 
   async function loadPdf (file) {
@@ -1061,23 +1060,32 @@
     document.addEventListener('paste', handlePaste)
   })
 
+  async function withBusy(fn) {
+    isBusy.value = true
+    try {
+      await fn()
+    } finally {
+      isBusy.value = false
+    }
+  }
+
   defineExpose({
     // Background operations
-    setBackgroundColor,
-    removeBackground,
+    setBackgroundColor: (...args) => withBusy(() => setBackgroundColor(...args)),
+    removeBackground: () => withBusy(removeBackground),
     previewBackgroundColor,
     endPreviewBackgroundColor,
 
     // Crop operations
     previewCropToContent,
-    cropToOverlay,
+    cropToOverlay: () => withBusy(cropToOverlay),
 
     // JPEG operations
-    fixJpegArtifacts,
+    fixJpegArtifacts: () => withBusy(fixJpegArtifacts),
     highlightJpegArtifacts,
 
     // Grayscale operations
-    applyGrayscale,
+    applyGrayscale: (...args) => withBusy(() => applyGrayscale(...args)),
     previewGrayscale,
     endPreviewGrayscale,
 
@@ -1086,9 +1094,9 @@
     clearCalibration,
 
     // History
-    undo,
-    redo,
-    resetToOriginal,
+    undo: () => withBusy(undo),
+    redo: () => withBusy(redo),
+    resetToOriginal: () => withBusy(resetToOriginal),
 
     // Overlay
     showOverlay,
@@ -1113,6 +1121,7 @@
 
 <style scoped>
   .dropField {
+    position: relative;
     width: 100%;
     height: 100vh;
     background: #fff;
@@ -1500,5 +1509,29 @@
   .calib-error{
     color:#c00;
     margin: 4px 0 0;
+  }
+
+  .busy-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 20;
+    border-radius: 4px;
+  }
+
+  .busy-spinner {
+    width: 48px;
+    height: 48px;
+    border: 5px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #ffffff;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
   }
 </style>

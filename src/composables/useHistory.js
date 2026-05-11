@@ -50,7 +50,7 @@ export function useHistory({
     }
   }
 
-  function restoreSnapshot(snap) {
+  async function restoreSnapshot(snap) {
     if (!snap) {
       return
     }
@@ -64,7 +64,7 @@ export function useHistory({
 
       preview.value = URL.createObjectURL(new Blob([snap.bytes], { type: 'application/pdf' }))
       emit('update:preview', preview.value)
-      renderPdfPage(snap.page || 1)
+      await renderPdfPage(snap.page || 1)
     } else {
       isPdf.value = false
       originalFileName.value = snap.name
@@ -115,7 +115,7 @@ export function useHistory({
     }
   }
 
-  function undo() {
+  async function undo() {
     const snap = history.pop()
     if (!snap) {
       return
@@ -124,10 +124,10 @@ export function useHistory({
     const currentSnap = makeSnapshot()
     future.push(currentSnap)
 
-    restoreSnapshot(snap)
+    await restoreSnapshot(snap)
   }
 
-  function redo() {
+  async function redo() {
     const snap = future.pop()
     if (!snap) {
       return
@@ -135,17 +135,17 @@ export function useHistory({
 
     const currentSnap = makeSnapshot()
     history.push(currentSnap)
-    restoreSnapshot(snap)
+    await restoreSnapshot(snap)
   }
 
-  function resetToOriginal() {
+  async function resetToOriginal() {
     if (!origSnapshot.value) {
       return
     }
 
     history.length = 0
     future.length = 0
-    restoreSnapshot(origSnapshot.value)
+    await restoreSnapshot(origSnapshot.value)
   }
 
   function saveOriginalSnapshot() {
