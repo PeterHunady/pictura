@@ -10,7 +10,9 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
 
   let resizing = false
   let activeResizeHandle = null
+  let dragging = false
   const resizeStart = {}
+  const dragStart = {}
 
   const overlayStyle = computed(() => {
     const scale = initialScale.value || 1
@@ -40,15 +42,10 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     const maxWidth = maxW.value || 0
     const maxHeight = maxH.value || 0
 
-    // When maxWidth/maxHeight is at the fallback value (≤1), imgEl hasn't loaded yet —
-    // don't clamp w/h to it, use the explicitly provided dimensions as the bound instead
-    const effectiveMaxW = maxWidth > 1 ? maxWidth : (w ?? 1)
-    const effectiveMaxH = maxHeight > 1 ? maxHeight : (h ?? 1)
-
-    const overlayWidth = Math.max(1, Math.min(w ?? effectiveMaxW, effectiveMaxW))
-    const overlayHeight = Math.max(1, Math.min(h ?? effectiveMaxH, effectiveMaxH))
-    const clampedX = effectiveMaxW > overlayWidth ? Math.max(0, Math.min(x, effectiveMaxW - overlayWidth)) : 0
-    const clampedY = effectiveMaxH > overlayHeight ? Math.max(0, Math.min(y, effectiveMaxH - overlayHeight)) : 0
+    const overlayWidth = Math.max(1, Math.min(w ?? maxWidth, maxWidth || w || 1))
+    const overlayHeight = Math.max(1, Math.min(h ?? maxHeight, maxHeight || h || 1))
+    const clampedX = maxWidth ? Math.max(0, Math.min(x, maxWidth - overlayWidth)) : (x ?? 0)
+    const clampedY = maxHeight ? Math.max(0, Math.min(y, maxHeight - overlayHeight)) : (y ?? 0)
 
     overlayW.value = Math.round(overlayWidth)
     overlayH.value = Math.round(overlayHeight)
@@ -172,6 +169,55 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     }
   }
 
+  function startDrag(e) {
+    dragging = true
+
+    if (panzoom && panzoom()) {
+      panzoom().pause()
+    }
+
+    const currentZoom = panzoom && panzoom() ? panzoom().getTransform().scale : 1
+    dragStart.scale = initialScale.value * currentZoom
+    dragStart.startX = e.clientX
+    dragStart.startY = e.clientY
+    dragStart.origX = overlayX.value
+    dragStart.origY = overlayY.value
+
+    window.addEventListener('mousemove', onDrag)
+    window.addEventListener('mouseup', stopDrag)
+  }
+
+  function onDrag(e) {
+    if (!dragging) {
+      return
+    }
+
+    const moveX = (e.clientX - dragStart.startX) / dragStart.scale
+    const moveY = (e.clientY - dragStart.startY) / dragStart.scale
+    const maxWidth = maxW.value || 1
+    const maxHeight = maxH.value || 1
+
+    let newX = dragStart.origX + moveX
+    let newY = dragStart.origY + moveY
+
+    newX = Math.max(0, Math.min(newX, maxWidth - overlayW.value))
+    newY = Math.max(0, Math.min(newY, maxHeight - overlayH.value))
+    overlayX.value = Math.round(newX)
+    overlayY.value = Math.round(newY)
+
+    emit('update:overlay', { width: overlayW.value, height: overlayH.value, x: overlayX.value, y: overlayY.value })
+  }
+
+  function stopDrag() {
+    dragging = false
+    window.removeEventListener('mousemove', onDrag)
+    window.removeEventListener('mouseup', stopDrag)
+
+    if (panzoom && panzoom()) {
+      panzoom().resume()
+    }
+  }
+
   return {
     overlayX,
     overlayY,
@@ -186,5 +232,6 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     setOverlayVisible,
     getPdfOverlayBox,
     startResize,
+    startDrag,
   }
 }

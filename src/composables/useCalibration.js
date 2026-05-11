@@ -167,12 +167,12 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     calibrationDpi.value = null
 
     detachCalibrationListeners()
-    measureCssDpi()
+    measureCssDpi1in()
     updateScaleLimits()
     updateDisplayScale()
   }
 
-  function measureCssDpi() {
+  function measureCssDpi1in() {
     const el = document.createElement('div')
     el.style.width = '1in'
     el.style.position = 'absolute'
@@ -194,7 +194,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
       attachCalibrationListeners()
       updateCalibratedDpi()
     } else {
-      measureCssDpi()
+      measureCssDpi1in()
     }
 
     const savedSlider = parseFloat(localStorage.getItem(CARD_SLIDER_KEY))
@@ -226,7 +226,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     applyCardCalibration,
     clearCalibration,
     measureCalibrationLine,
-    measureCssDpi,
+    measureCssDpi1in,
     initCalibration,
     detachCalibrationListeners,
     getPageZoom,

@@ -431,56 +431,41 @@ export function useBackground({
     pushHistory()
 
     if (isPdf.value) {
-      const bytes = pdfBytes()
-      const sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
-      const renderedPdf = await getDocument({ data: bytes }).promise
+      const pdf = await getDocument({ data: pdfBytes() }).promise
       const croppedPdf = await PDFDocument.create()
       const background = originalBackground.value
 
-      const pageCount = sourcePdf.getPageCount()
-      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
 
-      const rasterPage = await renderedPdf.getPage(activeIndex + 1)
-      const defaultViewport = rasterPage.getViewport({ scale: 1 })
-      const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
-      const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
-      const scale = Math.min(dpiScale, maxScaleByPixels)
-      const exportViewport = rasterPage.getViewport({ scale })
+        const defaultViewport = page.getViewport({ scale: 1 })
+        const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
+        const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
+        const scale = Math.min(dpiScale, maxScaleByPixels)
+        const exportViewport = page.getViewport({ scale })
 
-      const tempCanvas = document.createElement('canvas')
-      tempCanvas.width = Math.round(exportViewport.width)
-      tempCanvas.height = Math.round(exportViewport.height)
+        const tempCanvas = document.createElement('canvas')
+        tempCanvas.width = Math.round(exportViewport.width)
+        tempCanvas.height = Math.round(exportViewport.height)
 
-      await rasterPage.render({
-        canvasContext: tempCanvas.getContext('2d', { willReadFrequently: true }),
-        viewport: exportViewport,
-        background: 'rgba(0,0,0,0)',
-      }).promise
+        await page.render({
+          canvasContext: tempCanvas.getContext('2d', { willReadFrequently: true }),
+          viewport: exportViewport,
+          background: 'rgba(0,0,0,0)',
+        }).promise
 
-      const dataUrl = makeBackgroundTransparent(tempCanvas, background)
-      const pngBytes = dataURLtoU8(dataUrl)
-      const pngImg = await croppedPdf.embedPng(pngBytes)
+        const dataUrl = makeBackgroundTransparent(tempCanvas, background)
+        const pngBytes = dataURLtoU8(dataUrl)
+        const pngImg = await croppedPdf.embedPng(pngBytes)
 
-      const { width: pageWidth, height: pageHeight } = sourcePdf.getPage(activeIndex).getSize()
-      const pageIndices = sourcePdf.getPageIndices()
-      const copiedPages = await croppedPdf.copyPages(sourcePdf, pageIndices)
-
-      for (let i = 0; i < copiedPages.length; i++) {
-        if (i === activeIndex) {
-          const newPage = croppedPdf.addPage([pageWidth, pageHeight])
-          newPage.drawImage(pngImg, { x: 0, y: 0, width: pageWidth, height: pageHeight })
-        } else {
-          croppedPdf.addPage(copiedPages[i])
-        }
+        const pageWidth = defaultViewport.width
+        const pageHeight = defaultViewport.height
+        const newPage = croppedPdf.addPage([pageWidth, pageHeight])
+        newPage.drawImage(pngImg, { x: 0, y: 0, width: pageWidth, height: pageHeight })
       }
 
       const newBytes = await croppedPdf.save()
       originalPdf.value = newBytes
-
-      if (preview.value?.startsWith('blob:')) {
-        URL.revokeObjectURL(preview.value)
-      }
-
       preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()

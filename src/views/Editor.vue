@@ -506,14 +506,12 @@
         }
 
         const fileExtension = exportResult.fileExtension || targetFormat || 'png'
-        const url = URL.createObjectURL(exportResult.blob)
         const a = document.createElement('a')
-        a.href = url
+        a.href = URL.createObjectURL(exportResult.blob)
         a.download = `${(name || 'export').trim()}.${fileExtension}`
-        document.body.appendChild(a)
         a.click()
-        document.body.removeChild(a)
-        setTimeout(() => URL.revokeObjectURL(url), 100)
+
+        URL.revokeObjectURL(a.href)
         analytics.endSession({ actions: actionsPerformed.value })
         actionsPerformed.value = []
     }

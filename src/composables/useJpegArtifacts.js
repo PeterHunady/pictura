@@ -1,6 +1,5 @@
 import { ref } from 'vue'
-import { PDFDocument } from 'pdf-lib'
-import { applyBilateralFilter, sobelGradient, bilateralFilterImageData, unsharpMask, dataURLtoU8 } from './imageProcessing'
+import { applyBilateralFilter, sobelGradient, bilateralFilterImageData, unsharpMask } from './imageProcessing'
 
 const BILATERAL_RADIUS = 4
 const BILATERAL_SPATIAL_DISTANCE = 4
@@ -9,21 +8,7 @@ const SHARPEN_BLUR_SIZE = 5
 const SHARPEN_BLUR_AMOUNT = 1.0
 const SHARPEN_STRENGTH = 1.5
 
-export function useJpegArtifacts({
-  markCanvas,
-  getSourceCanvas,
-  pushHistory,
-  preview,
-  emit,
-  imgEl,
-  isPdf,
-  pdfBytes,
-  originalPdf,
-  originalFileSize,
-  originalLastModified,
-  currentPage,
-  renderPdfPage,
-}) {
+export function useJpegArtifacts({ markCanvas, getSourceCanvas, pushHistory, preview, emit, imgEl }) {
   const highlightOn = ref(false)
 
   function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
@@ -104,63 +89,9 @@ export function useJpegArtifacts({
     highlightOn.value = true
   }
 
-  async function fixJpegArtifacts() {
+  function fixJpegArtifacts() {
     clearHighlights()
     pushHistory()
-
-    if (isPdf.value) {
-      const src = getSourceCanvas()
-      if (!src) {
-        return
-      }
-
-      const offscreen = document.createElement('canvas')
-      offscreen.width = src.width
-      offscreen.height = src.height
-      const context = offscreen.getContext('2d', { willReadFrequently: true })
-      context.drawImage(src, 0, 0)
-
-      const srcData = context.getImageData(0, 0, src.width, src.height)
-      const bilateralResult = bilateralFilterImageData(srcData, src.width, src.height, BILATERAL_RADIUS, BILATERAL_SPATIAL_DISTANCE, BILATERAL_COLOR_SIMILARITY)
-      const sharpenedResult = unsharpMask(bilateralResult, src.width, src.height, SHARPEN_BLUR_SIZE, SHARPEN_BLUR_AMOUNT, SHARPEN_STRENGTH)
-      context.putImageData(sharpenedResult, 0, 0)
-
-      const bytes = pdfBytes()
-      const sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
-      const newPdf = await PDFDocument.create()
-
-      const pageCount = sourcePdf.getPageCount()
-      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
-
-      const pngBytes = dataURLtoU8(offscreen.toDataURL('image/png'))
-      const pngImg = await newPdf.embedPng(pngBytes)
-      const { width: pageW, height: pageH } = sourcePdf.getPage(activeIndex).getSize()
-
-      const copiedPages = await newPdf.copyPages(sourcePdf, sourcePdf.getPageIndices())
-      for (let i = 0; i < copiedPages.length; i++) {
-        if (i === activeIndex) {
-          const newPage = newPdf.addPage([pageW, pageH])
-          newPage.drawImage(pngImg, { x: 0, y: 0, width: pageW, height: pageH })
-        } else {
-          newPdf.addPage(copiedPages[i])
-        }
-      }
-
-      const newBytes = await newPdf.save()
-      originalPdf.value = newBytes
-
-      if (preview.value?.startsWith('blob:')) {
-        URL.revokeObjectURL(preview.value)
-      }
-
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
-      originalFileSize.value = newBytes.length
-      originalLastModified.value = Date.now()
-
-      emit('update:preview', preview.value)
-      await renderPdfPage(currentPage.value)
-      return
-    }
 
     const img = imgEl.value
     if (!img?.naturalWidth) {
