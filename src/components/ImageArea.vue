@@ -1342,7 +1342,7 @@
   }
 
   .tool-canvas.active {
-    pointer-events: all;
+    pointer-events: auto;
   }
 
   .tool-canvas.cursor-nw-resize { cursor: nw-resize; }

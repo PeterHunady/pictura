@@ -455,7 +455,7 @@
     position: fixed;
     bottom: 45px;
     align-self: flex-end;
-    right: -8px;
+    right: 0px;
     width: 36px;
     height: 36px;
     display: flex;

@@ -33,7 +33,7 @@ export function usePanzoom({
   let lastWrapWidth = null
 
   const lastPointer = { x: null, y: null }
-  let pointerListenersAdded = false
+  let listenersWrap = null
 
   function rememberPointer(e) {
     lastPointer.x = e.clientX
@@ -148,7 +148,7 @@ export function usePanzoom({
 
     const wrap = previewWrap.value
 
-    if (wrap && !pointerListenersAdded) {
+    if (wrap && wrap !== listenersWrap) {
       wrap.addEventListener('mousemove', rememberPointer)
       wrap.addEventListener('mousedown', rememberPointer)
 
@@ -170,7 +170,7 @@ export function usePanzoom({
         }, { passive: false }
       )
 
-      pointerListenersAdded = true
+      listenersWrap = wrap
     }
 
     // use the smaller scale so the whole image fits without being cut
