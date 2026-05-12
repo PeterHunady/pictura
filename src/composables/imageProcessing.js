@@ -28,15 +28,15 @@ export function applyBilateralFilter(srcPixels, width, height, radius = 2, spati
       let sumG = 0
       let sumB = 0
 
-      for (let dy = -radius; dy <= radius; dy++) {
-        const yWeight = spatialWeights[dy + radius]
+      for (let offsetY = -radius; offsetY <= radius; offsetY++) {
+        const yWeight = spatialWeights[offsetY + radius]
 
-        for (let dx = -radius; dx <= radius; dx++) {
-          const neighborIndex = ((y + dy) * width + (x + dx)) * 4
+        for (let offsetX = -radius; offsetX <= radius; offsetX++) {
+          const neighborIndex = ((y + offsetY) * width + (x + offsetX)) * 4
           const diffR = srcPixels[neighborIndex] - centerR
           const diffG = srcPixels[neighborIndex + 1] - centerG
           const diffB = srcPixels[neighborIndex + 2] - centerB
-          const weight = yWeight * spatialWeights[dx + radius] * Math.exp(-(diffR * diffR + diffG * diffG + diffB * diffB) / colorDivider)
+          const weight = yWeight * spatialWeights[offsetX + radius] * Math.exp(-(diffR * diffR + diffG * diffG + diffB * diffB) / colorDivider)
 
           weightSum += weight
           sumR += srcPixels[neighborIndex] * weight

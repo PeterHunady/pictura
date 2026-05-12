@@ -80,7 +80,7 @@ export function usePanzoom({
     })
   }
 
-  // reverse of updateDisplayScale — converts a target percentage to a panzoom zoom factor and applies it
+  // apply a new zoom based on percent value from the input
   function setDisplayScale(newScale) {
     if (!panzoom || !basePixelWidth.value) {
       return
@@ -163,9 +163,9 @@ export function usePanzoom({
           event.preventDefault()
           const scrollSpeed = 0.5
           if (panzoom) {
-            const dx = -event.deltaX * scrollSpeed
-            const dy = -event.deltaY * scrollSpeed
-            panzoom.moveBy(dx, dy)
+            const panX = -event.deltaX * scrollSpeed
+            const panY = -event.deltaY * scrollSpeed
+            panzoom.moveBy(panX, panY)
           }
         }, { passive: false }
       )
@@ -244,11 +244,11 @@ export function usePanzoom({
       return
     }
 
-    const deltaW = newWrapWidth - lastWrapWidth
+    const widthChange = newWrapWidth - lastWrapWidth
     lastWrapWidth = newWrapWidth
     const transform = panzoom.getTransform()
     // move by half of the width change, so the image stays centered
-    panzoom.moveTo(transform.x + deltaW/2, transform.y)
+    panzoom.moveTo(transform.x + widthChange/2, transform.y)
 
     updateDisplayScale()
   }

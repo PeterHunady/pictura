@@ -139,10 +139,10 @@ export function useMark({
 
     for (const name of handleNames) {
       const pos = handles[name]
-      const dx = position.x - pos.x
-      const dy = position.y - pos.y
+      const distX = position.x - pos.x
+      const distY = position.y - pos.y
 
-      if (Math.abs(dx) <= HANDLE_HIT_SIZE / 2 && Math.abs(dy) <= HANDLE_HIT_SIZE / 2) {
+      if (Math.abs(distX) <= HANDLE_HIT_SIZE / 2 && Math.abs(distY) <= HANDLE_HIT_SIZE / 2) {
         return name
       }
     }
@@ -271,8 +271,8 @@ export function useMark({
     }
 
     if (shapeMode.value === 'resizing' && activeShape.value && shapeDragStart) {
-      const dx = position.x - shapeDragStart.x
-      const dy = position.y - shapeDragStart.y
+      const moveX = position.x - shapeDragStart.x
+      const moveY = position.y - shapeDragStart.y
       const handle = activeHandle.value
 
       let newX = shapeDragStart.shapeX
@@ -282,21 +282,21 @@ export function useMark({
 
       // each corner changes the position and size in a different way
       if (handle === 'nw') {
-        newX = shapeDragStart.shapeX + dx
-        newY = shapeDragStart.shapeY + dy
-        newW = shapeDragStart.shapeW - dx
-        newH = shapeDragStart.shapeH - dy
+        newX = shapeDragStart.shapeX + moveX
+        newY = shapeDragStart.shapeY + moveY
+        newW = shapeDragStart.shapeW - moveX
+        newH = shapeDragStart.shapeH - moveY
       } else if (handle === 'ne') {
-        newY = shapeDragStart.shapeY + dy
-        newW = shapeDragStart.shapeW + dx
-        newH = shapeDragStart.shapeH - dy
+        newY = shapeDragStart.shapeY + moveY
+        newW = shapeDragStart.shapeW + moveX
+        newH = shapeDragStart.shapeH - moveY
       } else if (handle === 'sw') {
-        newX = shapeDragStart.shapeX + dx
-        newW = shapeDragStart.shapeW - dx
-        newH = shapeDragStart.shapeH + dy
+        newX = shapeDragStart.shapeX + moveX
+        newW = shapeDragStart.shapeW - moveX
+        newH = shapeDragStart.shapeH + moveY
       } else if (handle === 'se') {
-        newW = shapeDragStart.shapeW + dx
-        newH = shapeDragStart.shapeH + dy
+        newW = shapeDragStart.shapeW + moveX
+        newH = shapeDragStart.shapeH + moveY
       }
 
       // if the user drags past the other corner, flip the shape so width and height stay positive
@@ -325,12 +325,12 @@ export function useMark({
     }
 
     if (shapeMode.value === 'moving' && activeShape.value && shapeDragStart) {
-      const dx = position.x - shapeDragStart.x
-      const dy = position.y - shapeDragStart.y
+      const moveX = position.x - shapeDragStart.x
+      const moveY = position.y - shapeDragStart.y
 
       activeShape.value = {
-        x: shapeDragStart.shapeX + dx,
-        y: shapeDragStart.shapeY + dy,
+        x: shapeDragStart.shapeX + moveX,
+        y: shapeDragStart.shapeY + moveY,
         width: activeShape.value.width,
         height: activeShape.value.height,
         type: activeShape.value.type,

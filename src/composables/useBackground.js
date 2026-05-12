@@ -87,38 +87,24 @@ export function useBackground({
     const step = Math.max(1, Math.floor(smaller / 80))
     const MIN_ALPHA = 8
 
-    // reduce color levels, so similar colors are put into the same group
-    function quantize(v) {
-      return Math.floor(v / 16)
-    }
-
-    function keyOf(r, g, b) {
-      return quantize(r) + '_' + quantize(g) + '_' + quantize(b)
-    }
-
     const sums = new Map()
 
-    function sampleRow(y) {
+    for (const y of [inset, Math.max(inset, height - 1 - inset)]) {
       const row = context.getImageData(0, y, width, 1).data
       for (let x = 0; x < width; x += step) {
         const i = x * 4
-        const a = row[i + 3]
-
-        if (a <= MIN_ALPHA) {
+        if (row[i + 3] <= MIN_ALPHA) {
           continue
         }
-
         const r = row[i]
         const g = row[i + 1]
         const b = row[i + 2]
-        const k = keyOf(r, g, b)
+        const k = Math.floor(r / 16) + '_' + Math.floor(g / 16) + '_' + Math.floor(b / 16)
         let bucket = sums.get(k)
-
         if (!bucket) {
           bucket = { count: 0, R: 0, G: 0, B: 0 }
           sums.set(k, bucket)
         }
-
         bucket.count++
         bucket.R += r
         bucket.G += g
@@ -126,38 +112,28 @@ export function useBackground({
       }
     }
 
-    function sampleCol(x) {
+    for (const x of [inset, Math.max(inset, width - 1 - inset)]) {
       const col = context.getImageData(x, 0, 1, height).data
       for (let y = 0; y < height; y += step) {
         const i = y * 4
-        const a = col[i + 3]
-
-        if (a <= MIN_ALPHA) {
+        if (col[i + 3] <= MIN_ALPHA) {
           continue
         }
-
         const r = col[i]
         const g = col[i + 1]
         const b = col[i + 2]
-        const k = keyOf(r, g, b)
+        const k = Math.floor(r / 16) + '_' + Math.floor(g / 16) + '_' + Math.floor(b / 16)
         let bucket = sums.get(k)
-
         if (!bucket) {
           bucket = { count: 0, R: 0, G: 0, B: 0 }
           sums.set(k, bucket)
         }
-
         bucket.count++
         bucket.R += r
         bucket.G += g
         bucket.B += b
       }
     }
-
-    sampleRow(inset)
-    sampleRow(Math.max(inset, height - 1 - inset))
-    sampleCol(inset)
-    sampleCol(Math.max(inset, width - 1 - inset))
 
     if (sums.size === 0) {
       return
@@ -343,8 +319,8 @@ export function useBackground({
     }
 
     const COLOR_LIMIT = 140
-    const SOFT_EDGE_LIMIT = 100000
     const NEAR_RADIUS = 2
+    const MAX_DIST = 3 * 255 * 255
 
     const backgroundPixels = new Uint8Array(width * height)
 
@@ -374,10 +350,6 @@ export function useBackground({
       }
     }
 
-    function mixColor(currentColor, target, t) {
-      return Math.round(currentColor + (target - currentColor) * t)
-    }
-
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const pixel = y * width + x
@@ -402,20 +374,16 @@ export function useBackground({
           continue
         }
 
-        if (colorDifference > SOFT_EDGE_LIMIT) {
-          continue
-        }
-
         let nearBackground = false
-        for (let dy = -NEAR_RADIUS; dy <= NEAR_RADIUS && !nearBackground; dy++) {
-          const nextY = y + dy
+        for (let offsetY = -NEAR_RADIUS; offsetY <= NEAR_RADIUS && !nearBackground; offsetY++) {
+          const nextY = y + offsetY
           if (nextY < 0 || nextY >= height) {
             continue
           }
 
-          for (let dx = -NEAR_RADIUS; dx <= NEAR_RADIUS; dx++) {
-            const nextX = x + dx
-            if (nextX < 0 || nextX >= width || (dx === 0 && dy === 0)) {
+          for (let offsetX = -NEAR_RADIUS; offsetX <= NEAR_RADIUS; offsetX++) {
+            const nextX = x + offsetX
+            if (nextX < 0 || nextX >= width || (offsetX === 0 && offsetY === 0)) {
               continue
             }
 
@@ -430,12 +398,29 @@ export function useBackground({
           continue
         }
 
-        // set blend strength by how close this pixel is to the background color
-        const ratio = (SOFT_EDGE_LIMIT - colorDifference) / (SOFT_EDGE_LIMIT - COLOR_LIMIT)
-        const strength = 0.85
-        data[index] = mixColor(r, newBackground.r, ratio * strength)
-        data[index + 1] = mixColor(g, newBackground.g, ratio * strength)
-        data[index + 2] = mixColor(b, newBackground.b, ratio * strength)
+        // estimate how much of this pixel is background using compositing model:
+        // pixel = bgAlpha * background + (1 - bgAlpha) * content
+        // bgAlpha = 1 - sqrt(colorDifference / MAX_DIST) gives the correct fraction
+        // for grayscale pixels and approximates well for colored ones
+        const bgAlpha = 1 - Math.sqrt(colorDifference / MAX_DIST)
+        if (bgAlpha <= 0) {
+          continue
+        }
+
+        let newR = r + bgAlpha * (newBackground.r - background.r)
+        let newG = g + bgAlpha * (newBackground.g - background.g)
+        let newB = b + bgAlpha * (newBackground.b - background.b)
+
+        if (newR < 0) { newR = 0 }
+        if (newR > 255) { newR = 255 }
+        if (newG < 0) { newG = 0 }
+        if (newG > 255) { newG = 255 }
+        if (newB < 0) { newB = 0 }
+        if (newB > 255) { newB = 255 }
+
+        data[index] = Math.round(newR)
+        data[index + 1] = Math.round(newG)
+        data[index + 2] = Math.round(newB)
       }
     }
 

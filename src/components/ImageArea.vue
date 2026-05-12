@@ -1030,7 +1030,7 @@
     })
 
     suppressGalleryOnce.value = false
-    const isAlpha = madeTransparentPdf.value || canvasHasAlpha(canvas)
+    const isAlpha = canvasHasAlpha(canvas)
     setHasAlpha(isAlpha)
     checkerOn.value = Boolean(isAlpha)
 

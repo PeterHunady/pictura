@@ -103,9 +103,9 @@ export function useBlur({
     if (!blurLastAppliedPosition) {
       applyBlur(position)
     } else {
-      const dx = position.x - blurLastAppliedPosition.x
-      const dy = position.y - blurLastAppliedPosition.y
-      const distance = Math.sqrt(dx * dx + dy * dy)
+      const moveX = position.x - blurLastAppliedPosition.x
+      const moveY = position.y - blurLastAppliedPosition.y
+      const distance = Math.sqrt(moveX * moveX + moveY * moveY)
       const radius = Math.max(1, Number(blurRadius.value) || 1)
       const step = Math.max(MIN_BLUR_STEP_PX, radius * BLUR_STEP_FRACTION)
 
@@ -116,7 +116,7 @@ export function useBlur({
 
         for (let i = 1; i <= steps; i++) {
           const moveRatio = i / steps
-          applyBlur({ x: blurLastAppliedPosition.x + dx * moveRatio, y: blurLastAppliedPosition.y + dy * moveRatio })
+          applyBlur({ x: blurLastAppliedPosition.x + moveX * moveRatio, y: blurLastAppliedPosition.y + moveY * moveRatio })
         }
       }
     }

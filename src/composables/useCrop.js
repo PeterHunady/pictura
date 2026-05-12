@@ -102,17 +102,17 @@ export function useCrop({
       let count = 0
       let lowAlpha = 0
 
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          let sampleX = centerX + dx
+      for (let offsetY = -r; offsetY <= r; offsetY++) {
+        for (let offsetX = -r; offsetX <= r; offsetX++) {
+          let sampleX = centerX + offsetX
           if (sampleX < 0) {
-            sampleX = 0 
+            sampleX = 0
           }
           if (sampleX > width - 1) {
             sampleX = width - 1
           }
 
-          let sampleY = centerY + dy
+          let sampleY = centerY + offsetY
           if (sampleY < 0) {
             sampleY = 0
           }
