@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: ExportControl.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="export export-control">
     <button class="export-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -85,7 +91,11 @@
     }
 
     const kb = bytes / 1024
-    return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb/1024).toFixed(2)} MB`
+    if (kb < 1024) {
+      return `${kb.toFixed(1)} KB`
+    }
+
+    return `${(kb / 1024).toFixed(2)} MB`
   })
 
   function baseName(fileName) {
@@ -94,9 +104,16 @@
     }
 
     const dotIndex = fileName.lastIndexOf('.')
-    return dotIndex > 0 ? fileName.slice(0,dotIndex) : fileName
+    
+    // use dotIndex > 0 so files like .gitignore are not handled as files with an extension
+    if (dotIndex > 0) {
+      return fileName.slice(0, dotIndex)
+    }
+    return fileName
   }
 
+  // check both the file type text and the file extension
+  // suggestedType can have the file type, but suggestedName can have the extension
   function detectFileFormat(fileInfo = '') {
     fileInfo = fileInfo.toLowerCase()
     if (fileInfo.includes('pdf')) {
@@ -129,6 +146,7 @@
     return 'png'
   }
 
+  // use suggestedName to detect the format when suggestedType is empty
   function setExportInfo(){
     name.value = baseName(props.suggestedName || 'export')
     format.value = detectFileFormat(props.suggestedType || props.suggestedName)
@@ -138,7 +156,7 @@
     emit('export', { name: name.value, format: format.value })
   }
 
-  const onEnter = (el) => {
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
 
@@ -151,28 +169,32 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
+  // run this when the component starts and when the suggested file info changes
   setExportInfo()
-  watch(() => [props.suggestedName, props.suggestedType], setExportInfo)
+  watch(() => props.suggestedName, setExportInfo)
+  watch(() => props.suggestedType, setExportInfo)
 
+  // wait a short time, so the size check is not called after every typed letter
+  // run the first size check when the component starts
   let exportSizeTimer = null
-  watch([name, format], ([fileName, fileFormat]) => {
+  watch([name, format], () => {
     clearTimeout(exportSizeTimer)
-    exportSizeTimer = setTimeout(() => emit('request-preview', { name: fileName, format: fileFormat }), 150)
+    exportSizeTimer = setTimeout(() => emit('request-preview', { name: name.value, format: format.value }), 150)
   }, { immediate: true })
 
   onBeforeUnmount(() => clearTimeout(exportSizeTimer))

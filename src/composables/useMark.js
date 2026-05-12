@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useMark.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref, watch, nextTick } from 'vue'
 import { getCanvasPosition, clearToolCanvas, prepareToolCanvas, saveCanvas } from './canvasToolUtils'
 
@@ -36,18 +40,22 @@ export function useMark({
 
   function prepareMarkCanvases(force = false) {
     const prepared = prepareToolCanvas({
-      active: markActive, isPdf, pdfCanvas, imgEl, editCanvas, toolCanvas,
-      canvasReady: markCanvasReady, force
+      active: markActive, isPdf: isPdf, pdfCanvas: pdfCanvas, imgEl: imgEl, editCanvas: editCanvas, toolCanvas: toolCanvas, canvasReady: markCanvasReady, force: force
     })
+
     if (prepared) {
       clearToolCanvas(toolCanvas.value)
       markCanvasReady = true
     }
   }
 
-  function drawMarkPreview(startPt, endPt) {
+  // redraw the tool canvas overlay, startPoint and endPoint show the shape while it is being drawn
+  function drawMarkPreview(startPoint, endPoint) {
     const toolCanvasEl = toolCanvas.value
-    if (!toolCanvasEl) return
+    if (!toolCanvasEl) {
+      return
+    }
+
     const context = toolCanvasEl.getContext('2d')
     context.setTransform(1, 0, 0, 1, 0, 0)
     context.clearRect(0, 0, toolCanvasEl.width, toolCanvasEl.height)
@@ -58,24 +66,24 @@ export function useMark({
       drawResizeHandles(context, shape)
     }
 
-    if (startPt && endPt) {
+    if (startPoint && endPoint) {
       context.strokeStyle = markColor.value
       context.lineWidth = markThickness.value
       context.lineCap = 'round'
       context.lineJoin = 'round'
 
-      const x = Math.min(startPt.x, endPt.x)
-      const y = Math.min(startPt.y, endPt.y)
-      const shapeWidth = Math.abs(endPt.x - startPt.x)
-      const shapeHeight = Math.abs(endPt.y - startPt.y)
+      const x = Math.min(startPoint.x, endPoint.x)
+      const y = Math.min(startPoint.y, endPoint.y)
+      const shapeWidth = Math.abs(endPoint.x - startPoint.x)
+      const shapeHeight = Math.abs(endPoint.y - startPoint.y)
 
       context.beginPath()
       if (markShape.value === 'circle') {
         const centerX = x + shapeWidth / 2
         const centerY = y + shapeHeight / 2
-        const rx = shapeWidth / 2
-        const ry = shapeHeight / 2
-        context.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2)
+        const horizontalRadius = shapeWidth / 2
+        const verticalRadius = shapeHeight / 2
+        context.ellipse(centerX, centerY, horizontalRadius, verticalRadius, 0, 0, Math.PI * 2)
       } else {
         context.rect(x, y, shapeWidth, shapeHeight)
       }
@@ -93,9 +101,9 @@ export function useMark({
     if (shape.type === 'circle') {
       const centerX = shape.x + shape.width / 2
       const centerY = shape.y + shape.height / 2
-      const rx = shape.width / 2
-      const ry = shape.height / 2
-      context.ellipse(centerX, centerY, rx, ry, 0, 0, Math.PI * 2)
+      const horizontalRadius = shape.width / 2
+      const verticalRadius = shape.height / 2
+      context.ellipse(centerX, centerY, horizontalRadius, verticalRadius, 0, 0, Math.PI * 2)
     } else {
       context.rect(shape.x, shape.y, shape.width, shape.height)
     }
@@ -109,7 +117,8 @@ export function useMark({
     context.strokeStyle = '#000000'
     context.lineWidth = 1
 
-    for (const pos of Object.values(handles)) {
+    const handlePositions = [handles.nw, handles.ne, handles.sw, handles.se]
+    for (const pos of handlePositions) {
       context.fillRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
       context.strokeRect(pos.x - HANDLE_SIZE / 2, pos.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE)
     }
@@ -126,9 +135,13 @@ export function useMark({
 
   function hitTestHandle(position, shape) {
     const handles = getHandlePositions(shape)
-    for (const [name, pos] of Object.entries(handles)) {
+    const handleNames = ['nw', 'ne', 'sw', 'se']
+
+    for (const name of handleNames) {
+      const pos = handles[name]
       const dx = position.x - pos.x
       const dy = position.y - pos.y
+
       if (Math.abs(dx) <= HANDLE_HIT_SIZE / 2 && Math.abs(dy) <= HANDLE_HIT_SIZE / 2) {
         return name
       }
@@ -137,25 +150,34 @@ export function useMark({
   }
 
   function hitTestShape(position, shape) {
-    return position.x >= shape.x && position.x <= shape.x + shape.width &&
-           position.y >= shape.y && position.y <= shape.y + shape.height
+    return position.x >= shape.x && position.x <= shape.x + shape.width && position.y >= shape.y && position.y <= shape.y + shape.height
   }
 
   function commitMarkToPreview() {
     saveCanvas({
       editCanvasEl: editCanvas.value,
-      originalFileName, isPdf, originalFileType,
+      originalFileName: originalFileName,
+      isPdf: isPdf,
+      originalFileType: originalFileType,
       skipChange: markSuppressNextImgLoadResync,
       suffix: 'marked',
-      preview, emit, canvasHasAlpha, setHasAlpha
+      preview: preview, 
+      emit: emit, 
+      canvasHasAlpha: canvasHasAlpha,
+      setHasAlpha: setHasAlpha
     })
   }
 
+  // draw the active shape to the edit canvas and clear the overlay
   function commitActiveShape() {
-    if (!activeShape.value) return
+    if (!activeShape.value) {
+      return
+    }
 
     const editCanvasEl = editCanvas.value
-    if (!editCanvasEl) return
+    if (!editCanvasEl) {
+      return
+    }
 
     const shape = activeShape.value
     const context = editCanvasEl.getContext('2d')
@@ -179,21 +201,29 @@ export function useMark({
   }
 
   function onMarkPointerDown(e) {
-    if (!markActive.value) return
-    if (!preview.value) return
+    if (!markActive.value || !preview.value) {
+      return
+    }
 
-    if (!markCanvasReady) prepareMarkCanvases(true)
+    if (!markCanvasReady) {
+      prepareMarkCanvases(true)
+    }
 
     const position = getCanvasPosition(e, toolCanvas.value)
-    if (!position) return
+    if (!position) {
+      return
+    }
 
-    try { toolCanvas.value?.setPointerCapture?.(e.pointerId) } catch (_) {}
+    try {
+      toolCanvas.value?.setPointerCapture?.(e.pointerId)
+    } catch (error) {}
 
     if (activeShape.value) {
       const handle = hitTestHandle(position, activeShape.value)
       if (handle) {
         shapeMode.value = 'resizing'
         activeHandle.value = handle
+        // save the shape at the start of dragging, so resize uses the original shape
         shapeDragStart = {
           x: position.x,
           y: position.y,
@@ -218,6 +248,7 @@ export function useMark({
         return
       }
 
+      // click outside the active shape to save it and start a new one
       commitActiveShape()
     }
 
@@ -230,10 +261,14 @@ export function useMark({
   }
 
   function onMarkPointerMove(e) {
-    if (!markActive.value) return
+    if (!markActive.value) {
+      return
+    }
 
     const position = getCanvasPosition(e, toolCanvas.value)
-    if (!position) return
+    if (!position) {
+      return
+    }
 
     if (shapeMode.value === 'resizing' && activeShape.value && shapeDragStart) {
       const dx = position.x - shapeDragStart.x
@@ -245,6 +280,7 @@ export function useMark({
       let newW = shapeDragStart.shapeW
       let newH = shapeDragStart.shapeH
 
+      // each corner changes the position and size in a different way
       if (handle === 'nw') {
         newX = shapeDragStart.shapeX + dx
         newY = shapeDragStart.shapeY + dy
@@ -263,21 +299,25 @@ export function useMark({
         newH = shapeDragStart.shapeH + dy
       }
 
+      // if the user drags past the other corner, flip the shape so width and height stay positive
       if (newW < 0) {
         newX = newX + newW
         newW = -newW
       }
+
       if (newH < 0) {
         newY = newY + newH
         newH = -newH
       }
 
       activeShape.value = {
-        ...activeShape.value,
         x: newX,
         y: newY,
         width: newW,
-        height: newH
+        height: newH,
+        type: activeShape.value.type,
+        color: activeShape.value.color,
+        thickness: activeShape.value.thickness
       }
 
       drawMarkPreview(null, null)
@@ -289,9 +329,13 @@ export function useMark({
       const dy = position.y - shapeDragStart.y
 
       activeShape.value = {
-        ...activeShape.value,
         x: shapeDragStart.shapeX + dx,
-        y: shapeDragStart.shapeY + dy
+        y: shapeDragStart.shapeY + dy,
+        width: activeShape.value.width,
+        height: activeShape.value.height,
+        type: activeShape.value.type,
+        color: activeShape.value.color,
+        thickness: activeShape.value.thickness
       }
 
       drawMarkPreview(null, null)
@@ -318,9 +362,13 @@ export function useMark({
   }
 
   function onMarkPointerUp(e) {
-    if (!markActive.value) return
+    if (!markActive.value) {
+      return
+    }
 
-    try { toolCanvas.value?.releasePointerCapture?.(e.pointerId) } catch (_) {}
+    try {
+      toolCanvas.value?.releasePointerCapture?.(e.pointerId)
+    } catch (error) {}
 
     if (shapeMode.value === 'resizing' || shapeMode.value === 'moving') {
       shapeMode.value = null
@@ -332,6 +380,7 @@ export function useMark({
 
     if (shapeMode.value === 'drawing' && markPainting && markStartPt) {
       const position = getCanvasPosition(e, toolCanvas.value)
+      
       if (position) {
         const x = Math.min(markStartPt.x, position.x)
         const y = Math.min(markStartPt.y, position.y)
@@ -340,8 +389,8 @@ export function useMark({
 
         if (shapeWidth > MIN_SHAPE_SIZE && shapeHeight > MIN_SHAPE_SIZE) {
           activeShape.value = {
-            x,
-            y,
+            x: x,
+            y: y,
             width: shapeWidth,
             height: shapeHeight,
             type: markShape.value,
@@ -350,6 +399,7 @@ export function useMark({
           }
         }
       }
+
       markPainting = false
       markStartPt = null
       shapeMode.value = null
@@ -358,7 +408,9 @@ export function useMark({
   }
 
   function onMarkPointerLeave() {
-    if (!markActive.value) return
+    if (!markActive.value) {
+      return
+    }
 
     if (shapeMode.value === 'drawing' && markPainting) {
       markPainting = false
@@ -376,8 +428,8 @@ export function useMark({
   }
 
   function setupMarkWatchers() {
-    watch(markActive, (on) => {
-      if (on) {
+    watch(markActive, function(newValue) {
+      if (newValue) {
         markCanvasReady = false
         markSuppressNextImgLoadResync.value = false
         nextTick(() => prepareMarkCanvases(true))
@@ -401,6 +453,7 @@ export function useMark({
     })
   }
 
+  // saving the mark reloads the image, so skip one canvas reset
   function handleImageLoadedMark() {
     if (markSuppressNextImgLoadResync.value) {
       markSuppressNextImgLoadResync.value = false

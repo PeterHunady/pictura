@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useJpegArtifacts.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref } from 'vue'
 import { PDFDocument } from 'pdf-lib'
 import { applyBilateralFilter, sobelGradient, bilateralFilterImageData, unsharpMask, dataURLtoU8 } from './imageProcessing'
@@ -5,6 +9,8 @@ import { applyBilateralFilter, sobelGradient, bilateralFilterImageData, unsharpM
 const BILATERAL_RADIUS = 4
 const BILATERAL_SPATIAL_DISTANCE = 4
 const BILATERAL_COLOR_SIMILARITY = 60
+
+// settings for adding sharpness back after bilateral blur
 const SHARPEN_BLUR_SIZE = 5
 const SHARPEN_BLUR_AMOUNT = 1.0
 const SHARPEN_STRENGTH = 1.5
@@ -26,13 +32,18 @@ export function useJpegArtifacts({
 }) {
   const highlightOn = ref(false)
 
+  // detect JPEG artifacts by comparing pixels with a smoothed image
+  // pixels near edges that change a lot are probably artifacts
   function highlightJpegArtifacts(color = '#00E5FF', opts = {}) {
     if (highlightOn.value) {
       clearHighlights()
       return
     }
 
-    const { diffThresh = 12, lowEdge = 40, highEdge = 150, gradLimit = 120 } = opts
+    const diffThresh = opts.diffThresh || 1
+    const lowEdge = opts.lowEdge || 40
+    const highEdge = opts.highEdge || 160
+    const gradLimit = opts.gradLimit || 120
 
     const src = getSourceCanvas()
     const markCanvasEl = markCanvas.value
@@ -52,9 +63,12 @@ export function useJpegArtifacts({
     const srcPixels = srcImageData.data
     const bilateralPixels = applyBilateralFilter(srcPixels, width, height, 2, 2, 25)
 
+    // standard weights for converting RGB to brightness
     const luminance = new Float32Array(width * height)
-    for (let i = 0, j = 0; i < srcPixels.length; i += 4, j++) {
+    let j = 0
+    for (let i = 0; i < srcPixels.length; i += 4) {
       luminance[j] = 0.299 * srcPixels[i] + 0.587 * srcPixels[i + 1] + 0.114 * srcPixels[i + 2]
+      j++
     }
 
     const gradient = sobelGradient(luminance, width, height)
@@ -64,17 +78,22 @@ export function useJpegArtifacts({
       if (gradient[i] > lowEdge) {
         nearEdge[i] = 1
       }
+
       if (gradient[i] > highEdge) {
         strongEdge[i] = 1
       }
     }
 
+    // artifact pixels are different from the smoothed image and are near edges
+    // strong real edges are skipped because they have a high gradient
     const mask = new Uint8Array(width * height)
-    for (let i = 0, j = 0; i < srcPixels.length; i += 4, j++) {
+    let m = 0
+    for (let i = 0; i < srcPixels.length; i += 4) {
       const avgDiff = (Math.abs(srcPixels[i] - bilateralPixels[i]) + Math.abs(srcPixels[i + 1] - bilateralPixels[i + 1]) + Math.abs(srcPixels[i + 2] - bilateralPixels[i + 2])) / 3
-      if (avgDiff > diffThresh && nearEdge[j] && !strongEdge[j] && gradient[j] < gradLimit) {
-        mask[j] = 1
+      if (avgDiff > diffThresh && nearEdge[m] && !strongEdge[m] && gradient[m] < gradLimit) {
+        mask[m] = 1
       }
+      m++
     }
 
     const colorR = parseInt(color.slice(1, 3), 16)
@@ -104,6 +123,7 @@ export function useJpegArtifacts({
     highlightOn.value = true
   }
 
+  // smooth artifacts with bilateral filter, then add sharpness back
   async function fixJpegArtifacts() {
     clearHighlights()
     pushHistory()
@@ -130,11 +150,22 @@ export function useJpegArtifacts({
       const newPdf = await PDFDocument.create()
 
       const pageCount = sourcePdf.getPageCount()
-      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
+      let activeIndex = (currentPage.value || 1) - 1
+
+      if (activeIndex < 0) {
+        activeIndex = 0
+      }
+      
+      if (activeIndex > pageCount - 1) {
+        activeIndex = pageCount - 1
+      }
 
       const pngBytes = dataURLtoU8(offscreen.toDataURL('image/png'))
       const pngImg = await newPdf.embedPng(pngBytes)
-      const { width: pageW, height: pageH } = sourcePdf.getPage(activeIndex).getSize()
+      const activePage = sourcePdf.getPage(activeIndex)
+      const activePageSize = activePage.getSize()
+      const pageW = activePageSize.width
+      const pageH = activePageSize.height
 
       const copiedPages = await newPdf.copyPages(sourcePdf, sourcePdf.getPageIndices())
       for (let i = 0; i < copiedPages.length; i++) {

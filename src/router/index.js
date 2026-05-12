@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: index.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { createRouter, createWebHistory } from 'vue-router'
 import Landing from '@/views/Landing.vue'
 import Editor from '@/views/Editor.vue'

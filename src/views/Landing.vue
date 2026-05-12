@@ -1,8 +1,15 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: Landing.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
     <div class="page">
         <TopBar
             :top-gap="topGap"
             :show-actions="false"
+            :show-privacy="true"
         />
 
         <main class="hero" :style="{ marginTop: topGap }">
@@ -11,9 +18,6 @@
                 <p class="ty-body-medium">
                     A simple browser tool for preparing images, screenshots, and PDF pages for academic documents.
                     Crop, clean, highlight, adjust, and export your files in just a few steps.
-                </p>
-                <p class="ty-body-medium">
-                    Everything runs locally in your browser, so your files stay private and never leave your device.
                 </p>
             </section>
 
@@ -56,7 +60,14 @@
     }
 
     function pickFile(files){
-        return [...files].find(f => f.type.startsWith('image/') || f.type === 'application/pdf') || null
+        for (let i = 0; i < files.length; i++) {
+            const f = files[i]
+            if (f.type.startsWith('image/') || f.type === 'application/pdf') {
+                return f
+            }
+        }
+
+        return null
     }
 
     function handleFile(file){
@@ -64,12 +75,14 @@
             return
         }
 
+        // save the file so the editor can use it after changing the page
         setPendingFile(file)
         router.push({ name: 'editor' })
     }
 
     function onPick(e){
         handleFile(pickFile(e.target.files || []))
+        // reset the input, so choosing the same file again still works
         e.target.value = ''
     }
 
@@ -82,6 +95,7 @@
         for (const item of items) {
             if (item.type.startsWith('image/')) {
                 const file = item.getAsFile()
+
                 if (file) {
                     handleFile(file)
                     e.preventDefault()
@@ -91,11 +105,11 @@
         }
     }
 
-    onMounted(() => {
+    onMounted(function() {
         document.addEventListener('paste', onPaste)
     })
 
-    onUnmounted(() => {
+    onUnmounted(function() {
         document.removeEventListener('paste', onPaste)
     })
 </script>

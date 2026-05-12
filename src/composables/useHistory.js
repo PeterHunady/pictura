@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useHistory.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref } from 'vue'
 import { hasAlphaImage } from './imageProcessing'
 
@@ -23,6 +27,7 @@ export function useHistory({
   const future = []
   const origSnapshot = ref(null)
 
+  // always return a copy, so the snapshot is not changed when originalPdf changes later
   function pdfBytes() {
     return originalPdf.value instanceof Uint8Array ? originalPdf.value.slice() : new Uint8Array(originalPdf.value)
   }
@@ -75,6 +80,7 @@ export function useHistory({
       preview.value = snap.dataUrl
       emit('update:preview', preview.value)
 
+      // image size is known only after loading, so meta and overlay setup must be in onload
       const img = new Image()
       img.onload = () => {
         emit('update:meta', {
@@ -91,6 +97,7 @@ export function useHistory({
         const isAlpha = hasAlphaImage(img)
         setHasAlpha(isAlpha)
 
+        // transparent images do not have a clear background color, so skip detection
         if (!isAlpha) {
           detectBackground()
         } else {
@@ -108,6 +115,7 @@ export function useHistory({
 
     const snap = makeSnapshot()
     history.push(snap)
+    // any new action clears redo history, and .length = 0 clears it without making a new array
     future.length = 0
 
     if (history.length > MAX_HISTORY) {
@@ -121,6 +129,7 @@ export function useHistory({
       return
     }
 
+    // save the current state to redo before going back
     const currentSnap = makeSnapshot()
     future.push(currentSnap)
 
@@ -148,6 +157,7 @@ export function useHistory({
     await restoreSnapshot(origSnapshot.value)
   }
 
+  // run this when a new file is loaded, so old history is removed
   function saveOriginalSnapshot() {
     origSnapshot.value = makeSnapshot()
     history.length = 0

@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: usePanzoom.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref, nextTick } from 'vue'
 import createPanzoom from 'panzoom'
 
@@ -22,6 +26,7 @@ export function usePanzoom({
   endPreviewBackgroundColor
 }) {
   let panzoom = null
+  // scale where the whole image fits in the view, used as the base for zoom
   const initialScale = ref(1)
   const minZoomScale = ref(null)
   const maxZoomScale = ref(null)
@@ -35,14 +40,16 @@ export function usePanzoom({
     lastPointer.y = e.clientY
   }
 
+  // convert image scale to percent based on the reference width, 100% means the image has the same width as referenceWidthMm on screen
   function getScaleLimits() {
     const naturalWidth = basePixelWidth.value || 1
     const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
-    const minScale = (minZoomScale.value ?? ((initialScale.value || 1) * PZ_MIN_ZOOM))
-    const maxScale = (maxZoomScale.value ?? ((initialScale.value || 1) * PZ_MAX_ZOOM))
+
+    const minScale = minZoomScale.value || ((initialScale.value || 1) * PZ_MIN_ZOOM)
+    const maxScale = maxZoomScale.value || ((initialScale.value || 1) * PZ_MAX_ZOOM)
     const minPercent = (naturalWidth * minScale / referenceWidth) * 100
     const maxPercent = (naturalWidth * maxScale / referenceWidth) * 100
-    return { minPercent, maxPercent }
+    return { minPercent: minPercent, maxPercent: maxPercent }
   }
 
   function updateScaleLimits() {
@@ -73,12 +80,21 @@ export function usePanzoom({
     })
   }
 
+  // reverse of updateDisplayScale — converts a target percentage to a panzoom zoom factor and applies it
   function setDisplayScale(newScale) {
     if (!panzoom || !basePixelWidth.value) {
       return
     }
 
-    const newPercent = Math.max(minScalePercent.value, Math.min(maxScalePercent.value, Number(newScale) || 0))
+    let newPercent = Number(newScale) || 0
+    if (newPercent < minScalePercent.value) {
+      newPercent = minScalePercent.value
+    }
+
+    if (newPercent > maxScalePercent.value) {
+      newPercent = maxScalePercent.value
+    }
+
     const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
     const newScreenWidth = (newPercent / 100) * referenceWidth
     const newImageScale = newScreenWidth / basePixelWidth.value
@@ -88,10 +104,17 @@ export function usePanzoom({
     const maxUserZoom = panzoom.getMaxZoom ? panzoom.getMaxZoom() : PZ_MAX_ZOOM
 
     let newZoom = newImageScale / (initialScale.value || 1)
-    newZoom = Math.max(minUserZoom, Math.min(maxUserZoom, newZoom))
+    if (newZoom < minUserZoom) {
+      newZoom = minUserZoom
+    }
+    if (newZoom > maxUserZoom) {
+      newZoom = maxUserZoom
+    }
 
     const zoomFactor = newZoom / currentZoom
-    if (!isFinite(zoomFactor) || Math.abs(zoomFactor - 1) < 1e-4) {
+
+    // skip very small changes, so rounding does not make the view shake
+    if (!isFinite(zoomFactor) || Math.abs(zoomFactor - 1) < 0.0001) {
       return
     }
 
@@ -104,7 +127,7 @@ export function usePanzoom({
     const centerX = wrapRect.left + wrapRect.width / 2
     const centerY = wrapRect.top + wrapRect.height / 2
     panzoom.zoomTo(centerX, centerY, zoomFactor)
-    nextTick(() => updateDisplayScale())
+    nextTick(updateDisplayScale)
   }
 
   function setReferenceWidth(newWidth) {
@@ -129,20 +152,14 @@ export function usePanzoom({
       wrap.addEventListener('mousemove', rememberPointer)
       wrap.addEventListener('mousedown', rememberPointer)
 
-      wrap.addEventListener('touchstart',(event) => {
-          const touch = event.touches && event.touches[0]
-          if (touch) {
-            rememberPointer(touch)
-          }
-        },{ passive: true }
-      )
-
-      wrap.addEventListener('wheel', (event) => {
+      wrap.addEventListener('wheel', function(event) {
           rememberPointer(event)
+          // ctrl or meta with wheel means zoom, so let panzoom handle it
           if (event.ctrlKey || event.metaKey) {
             return
           }
 
+          // passive: false is needed so we can stop the page from scrolling
           event.preventDefault()
           const scrollSpeed = 0.5
           if (panzoom) {
@@ -150,12 +167,13 @@ export function usePanzoom({
             const dy = -event.deltaY * scrollSpeed
             panzoom.moveBy(dx, dy)
           }
-        },{ passive: false }
+        }, { passive: false }
       )
 
       pointerListenersAdded = true
     }
 
+    // use the smaller scale so the whole image fits without being cut
     const scaleW = Math.floor(wrap.clientWidth) / naturalWidth
     const scaleH = Math.floor(wrap.clientHeight) / naturalHeight
     initialScale.value = Math.min(scaleW, scaleH)
@@ -172,12 +190,15 @@ export function usePanzoom({
     maxZoomScale.value = initialScale.value * PZ_MAX_ZOOM
 
     panzoom = createPanzoom(canvasWrapper.value, {
+      // panzoom uses relative zoom, so divide by initialScale to get the right limits
       minZoom: minZoomScale.value / initialScale.value,
       maxZoom: maxZoomScale.value / initialScale.value,
       bounds: false,
       boundsPadding: 0.1,
+
       beforeWheel: function (e) {
         const isZoomGesture = e.ctrlKey || e.metaKey
+        // return true to make panzoom skip this event, because normal scroll is used for panning
         return !isZoomGesture
       },
     })
@@ -186,6 +207,7 @@ export function usePanzoom({
     panzoom.on('pan', updateDisplayScale)
 
     if (wrap) {
+      // center the image when it loads for the first time
       const contentWidth = naturalWidth * initialScale.value
       const contentHeight = naturalHeight * initialScale.value
       const offsetX = (wrap.clientWidth - contentWidth) / 2
@@ -210,6 +232,7 @@ export function usePanzoom({
   function handleWrapperResize() {
     const el = isPdf.value ? pdfCanvas.value : imgEl.value
     const wrap = previewWrap.value
+    
     if (!el || !wrap || !canvasWrapper.value || !panzoom) {
       return
     }
@@ -224,6 +247,7 @@ export function usePanzoom({
     const deltaW = newWrapWidth - lastWrapWidth
     lastWrapWidth = newWrapWidth
     const transform = panzoom.getTransform()
+    // move by half of the width change, so the image stays centered
     panzoom.moveTo(transform.x + deltaW/2, transform.y)
 
     updateDisplayScale()

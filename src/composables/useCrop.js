@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useCrop.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { PDFDocument } from 'pdf-lib'
 
 export function useCrop({
@@ -42,6 +46,7 @@ export function useCrop({
     return tempCanvas
   }
 
+  // find where the content ends by filling the background from the corners, then use it to suggest a smaller crop area
   function previewCropToContent() {
     const sourceCanvas = getSourceCanvas()
     if (!sourceCanvas) {
@@ -51,7 +56,11 @@ export function useCrop({
     const sourceWidth = sourceCanvas.width
     const sourceHeight = sourceCanvas.height
 
-    let cropX = 0, cropY = 0, cropWidth = sourceWidth, cropHeight = sourceHeight
+    let cropX = 0
+    let cropY = 0
+    let cropWidth = sourceWidth
+    let cropHeight = sourceHeight
+
     if (overlayW.value > 0 && overlayH.value > 0) {
       const startX = Math.max(0, Math.floor(overlayX.value))
       const startY = Math.max(0, Math.floor(overlayY.value))
@@ -69,26 +78,54 @@ export function useCrop({
     cropCanvas.height = cropHeight
     cropCanvas.getContext('2d', { willReadFrequently: true }).drawImage(sourceCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)
 
-    const width = cropWidth, height = cropHeight
+    const width = cropWidth
+    const height = cropHeight
     const context = cropCanvas.getContext('2d', { willReadFrequently: true })
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
-    const indexOf = (x, y) => (y * width + x) * 4
-    const squaredDistance = (r1, g1, b1, r2, g2, b2) => {
-      const redDiff = r1 - r2, greenDiff = g1 - g2, blueDiff = b1 - b2
+    function indexOf(x, y) {
+      return (y * width + x) * 4
+    }
+
+    function squaredDistance(r1, g1, b1, r2, g2, b2) {
+      const redDiff = r1 - r2
+      const greenDiff = g1 - g2
+      const blueDiff = b1 - b2
       return redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff
     }
-    
-    const getAverageColor = (centerX, centerY, r = 1) => {
-      let R = 0, G = 0, B = 0, count = 0, lowAlpha = 0
+
+    function getAverageColor(centerX, centerY, r = 1) {
+      let R = 0
+      let G = 0
+      let B = 0
+      let count = 0
+      let lowAlpha = 0
+
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
-          const x = Math.min(width - 1, Math.max(0, centerX + dx))
-          const y = Math.min(height - 1, Math.max(0, centerY + dy))
-          const i = indexOf(x, y)
+          let sampleX = centerX + dx
+          if (sampleX < 0) {
+            sampleX = 0 
+          }
+          if (sampleX > width - 1) {
+            sampleX = width - 1
+          }
 
-          R += data[i]; G += data[i + 1]; B += data[i + 2]; count++
+          let sampleY = centerY + dy
+          if (sampleY < 0) {
+            sampleY = 0
+          }
+          if (sampleY > height - 1) {
+            sampleY = height - 1
+          }
+
+          const i = indexOf(sampleX, sampleY)
+          R += data[i]
+          G += data[i + 1]
+          B += data[i + 2]
+          count++
+
           if (data[i + 3] <= 12) {
             lowAlpha++
           }
@@ -102,23 +139,30 @@ export function useCrop({
     const bottomLeft = getAverageColor(0, height - 1)
     const bottomRight = getAverageColor(width - 1, height - 1)
 
+    // if most corner pixels are transparent, the image probably has no solid background
     const averageAlpha = (topLeft.lowAlphaRatio + topRight.lowAlphaRatio + bottomLeft.lowAlphaRatio + bottomRight.lowAlphaRatio) / 4
     const alphaOnly = averageAlpha > 0.5
 
     let background
     if (!alphaOnly) {
+      // compare the four corners and use the most common color as the background
       const cornerColors = [topLeft.rgb, topRight.rgb, bottomLeft.rgb, bottomRight.rgb]
-      const groups = cornerColors.map(color => ({ color, count: 1 }))
+      const groups = []
+      for (let i = 0; i < cornerColors.length; i++) {
+        groups.push({ color: cornerColors[i], count: 1 })
+      }
 
       for (let i = 0; i < cornerColors.length; i++) {
         for (let j = i + 1; j < cornerColors.length; j++) {
-          if (squaredDistance(...cornerColors[i], ...cornerColors[j]) < 25) {
+          if (squaredDistance(cornerColors[i][0], cornerColors[i][1], cornerColors[i][2], cornerColors[j][0], cornerColors[j][1], cornerColors[j][2]) < 25) {
             groups[i].count++
           }
         }
       }
 
-      groups.sort((a, b) => b.count - a.count)
+      groups.sort(function(a, b) {
+        return b.count - a.count
+      })
 
       const mainColor = groups[0].color
       background = {
@@ -135,7 +179,7 @@ export function useCrop({
     const visited = new Uint8Array(width * height)
     const queue = []
 
-    const tryPush = (x, y) => {
+    function tryPush(x, y) {
       if (x < 0 || x >= width || y < 0 || y >= height) {
         return
       }
@@ -147,30 +191,43 @@ export function useCrop({
 
       const i = indexOf(x, y)
       const alpha = data[i + 3]
-      const isBackground = alphaOnly ? (alpha <= alphaMin) : (alpha <= alphaMin) || (squaredDistance(data[i], data[i + 1], data[i + 2], background.r, background.g, background.b) <= colorTolerance)
-      if (isBackground) { 
+
+      let isBackground
+      if (alphaOnly) {
+        isBackground = alpha <= alphaMin
+      } else {
+        isBackground = (alpha <= alphaMin) || (squaredDistance(data[i], data[i + 1], data[i + 2], background.r, background.g, background.b) <= colorTolerance)
+      }
+
+      if (isBackground) {
         visited[pixelIndex] = 1
         queue.push(pixelIndex)
       }
     }
 
+    // start the background fill from all four corners
     tryPush(0, 0)
     tryPush(width - 1, 0)
     tryPush(0, height - 1)
     tryPush(width - 1, height - 1)
 
+    // spread to nearby pixels that match the background
     while (queue.length) {
       const pixelIndex = queue.pop()
-      const x = pixelIndex % width, y = (pixelIndex / width) | 0
+      const x = pixelIndex % width
+      const y = Math.floor(pixelIndex / width)
       tryPush(x + 1, y)
       tryPush(x - 1, y)
       tryPush(x, y + 1)
       tryPush(x, y - 1)
     }
 
-    let left = width, top = height, right = -1, bottom = -1
+    let left = width
+    let top = height
+    let right = -1
+    let bottom = -1
 
-    const isColumnBackground = (x, yMin, yMax) => {
+    function isColumnBackground(x, yMin, yMax) {
       for (let y = yMin; y <= yMax; y++) {
         if (!visited[y * width + x]) {
           return false
@@ -178,7 +235,8 @@ export function useCrop({
       }
       return true
     }
-    const isRowBackground = (y, xMin, xMax) => {
+
+    function isRowBackground(y, xMin, xMax) {
       for (let x = xMin; x <= xMax; x++) {
         if (!visited[y * width + x]) {
           return false
@@ -187,21 +245,57 @@ export function useCrop({
       return true
     }
 
-    for (let x = 0; x < width; x++) if (!isColumnBackground(x, 0, height - 1)) { left = x; break }
-    for (let x = width - 1; x >= 0; x--) if (!isColumnBackground(x, 0, height - 1)) { right = x; break }
-    for (let y = 0; y < height; y++) if (!isRowBackground(y, 0, width - 1)) { top = y; break }
-    for (let y = height - 1; y >= 0; y--) if (!isRowBackground(y, 0, width - 1)) { bottom = y; break }
+    for (let x = 0; x < width; x++) {
+      if (!isColumnBackground(x, 0, height - 1)) {
+        left = x
+        break
+      }
+    }
 
-    while (left < right && isColumnBackground(left, top, bottom)) left++
-    while (left < right && isColumnBackground(right, top, bottom)) right--
-    while (top < bottom && isRowBackground(top, left, right)) top++
-    while (top < bottom && isRowBackground(bottom, left, right)) bottom--
+    for (let x = width - 1; x >= 0; x--) {
+      if (!isColumnBackground(x, 0, height - 1)) {
+        right = x
+        break
+      }
+    }
+
+    for (let y = 0; y < height; y++) {
+      if (!isRowBackground(y, 0, width - 1)) {
+        top = y
+        break
+      }
+    }
+
+    for (let y = height - 1; y >= 0; y--) {
+      if (!isRowBackground(y, 0, width - 1)) {
+        bottom = y
+        break
+      }
+    }
+
+    // make the crop box smaller while its edge is still only background
+    while (left < right && isColumnBackground(left, top, bottom)) {
+      left++
+    }
+
+    while (left < right && isColumnBackground(right, top, bottom)) {
+      right--
+    }
+
+    while (top < bottom && isRowBackground(top, left, right)) {
+      top++
+    }
+
+    while (top < bottom && isRowBackground(bottom, left, right)) {
+      bottom--
+    }
 
     let newX = cropX + left
     let newY = cropY + top
     let newW = Math.max(1, right - left + 1)
     let newH = Math.max(1, bottom - top + 1)
 
+    // add 1px padding, so the edge of the content is not cut off
     const paddedX = Math.max(0, newX - 1)
     const paddedY = Math.max(0, newY - 1)
     const globalRight = Math.min(sourceWidth, newX + newW + 1)
@@ -232,9 +326,18 @@ export function useCrop({
       const croppedPdf = await PDFDocument.create()
 
       const pages = sourcePdf.getPages()
-      const pageIndex = Math.max(0, Math.min(pages.length - 1, (currentPage?.value || 1) - 1),)
+      let pageIndex = (currentPage?.value || 1) - 1
+      if (pageIndex < 0) {
+        pageIndex = 0
+      }
+      if (pageIndex > pages.length - 1) {
+        pageIndex = pages.length - 1
+      }
+
       const srcPage = pages[pageIndex]
-      const { width: pageW, height: pageH } = srcPage.getSize()
+      const pageSize = srcPage.getSize()
+      const pageW = pageSize.width
+      const pageH = pageSize.height
 
       const overlayLeft = overlayX.value
       const overlayTop = overlayY.value
@@ -246,21 +349,27 @@ export function useCrop({
       const topRatio = overlayTop / canvasH
       const bottomRatio = overlayBottom / canvasH
 
+      // PDF starts from the bottom-left, so the Y axis is opposite to canvas
       let left = leftRatio * pageW
       let right = rightRatio * pageW
       let top = (1 - topRatio) * pageH
       let bottom = (1 - bottomRatio) * pageH
 
-      left = Math.max(0, Math.min(pageW, left))
-      right = Math.max(0, Math.min(pageW, right))
-      bottom = Math.max(0, Math.min(pageH, bottom))
-      top = Math.max(0, Math.min(pageH, top))
+      if (left < 0) { left = 0 }
+      if (left > pageW) { left = pageW }
+      if (right < 0) { right = 0 }
+      if (right > pageW) { right = pageW }
+      if (bottom < 0) { bottom = 0 }
+      if (bottom > pageH) { bottom = pageH }
+      if (top < 0) { top = 0 }
+      if (top > pageH) { top = pageH }
 
+      // in PDF coordinates, top should be higher than bottom, otherwise the crop area is empty or wrong
       if (right <= left || top <= bottom) {
         return
       }
 
-      const croppedPage = await croppedPdf.embedPage(srcPage, { left, bottom, right, top })
+      const croppedPage = await croppedPdf.embedPage(srcPage, { left: left, bottom: bottom, right: right, top: top })
       const outW = right - left
       const outH = top - bottom
 
@@ -273,7 +382,7 @@ export function useCrop({
         URL.revokeObjectURL(preview.value)
       }
 
-      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }),)
+      preview.value = URL.createObjectURL(new Blob([newBytes], { type: 'application/pdf' }))
       originalFileSize.value = newBytes.length
       originalLastModified.value = Date.now()
 
@@ -297,6 +406,7 @@ export function useCrop({
       setupOverlay(newW, newH)
 
       if (typeof detectBackground === 'function') {
+        // wait for the next frame, so the new image is rendered before checking it
         requestAnimationFrame(() => detectBackground())
       }
 
@@ -325,7 +435,8 @@ export function useCrop({
     const cropHeight = Math.max(1, endY - startY)
 
     const canvas = document.createElement('canvas')
-    canvas.width = cropWidth; canvas.height = cropHeight
+    canvas.width = cropWidth
+    canvas.height = cropHeight
     const context = canvas.getContext('2d')
 
     context.drawImage(img, startX, startY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight)

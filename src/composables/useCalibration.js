@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useCalibration.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref, nextTick, watch } from 'vue'
 
 const CALIBRATION_KEY = 'imageDrop.cssBaseDpi'
@@ -25,8 +29,12 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     localStorage.setItem(REF_WIDTH_KEY, newValue.toString())
   })
 
+  // browser zoom changes CSS pixel size, so we need to remove its effect
   function getPageZoom() {
-    return (window.visualViewport && typeof window.visualViewport.scale === 'number') ? (window.visualViewport.scale || 1) : 1
+    if (window.visualViewport && typeof window.visualViewport.scale === 'number') {
+      return window.visualViewport.scale || 1
+    }
+    return 1
   }
 
   function updateCalibratedDpi() {
@@ -40,6 +48,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     updateDisplayScale()
   }
 
+  // browser zoom can trigger resize, so we update DPI when the window size changes
   function attachCalibrationListeners() {
     window.visualViewport?.addEventListener('resize', updateCalibratedDpi)
     window.addEventListener('resize', updateCalibratedDpi)
@@ -62,6 +71,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
       measureCalibrationLine()
 
       if (calibrationDpi.value && calibrationCssPx.value > 0) {
+        // convert saved DPI back to mm, so the input shows the last calibration value
         const measuredDpi = calibrationDpi.value / getPageZoom()
         const savedMm = (calibrationCssPx.value * 25.4) / measuredDpi
         calibrationMeasured.value = Math.round(savedMm * 10) / 10
@@ -89,7 +99,9 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
       return
     }
 
+    // 25.4 mm = 1 inch, so (pixels / mm) * 25.4 gives pixels per inch
     const measuredDpi = (calibrationCssPx.value * 25.4) / mm
+    // save DPI without browser zoom, so it stays correct after zoom changes
     const savedDpi = measuredDpi * getPageZoom()
 
     calibrationDpi.value = savedDpi
@@ -102,6 +114,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     screenDPI.value = newDpi
 
     if (panzoom && basePixelWidth.value > 0) {
+      // calculate the zoom needed to show the image in its real physical size
       const referenceWidth = (referenceWidthMm.value / 25.4) * screenDPI.value
       const referenceScale = referenceWidth / basePixelWidth.value
       const zoomScale = referenceScale / initialScale.value
@@ -172,6 +185,8 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
     updateDisplayScale()
   }
 
+  // measure screen DPI with a hidden 1-inch div
+  // use 96 as a safe fallback if the measurement fails
   function measureCssDpi() {
     const el = document.createElement('div')
     el.style.width = '1in'
@@ -189,6 +204,7 @@ export function useCalibration({ screenDPI, updateScaleLimits, updateDisplayScal
   function initCalibration() {
     const savedDpi = parseFloat(localStorage.getItem(CALIBRATION_KEY))
 
+    // values outside 20–2000 DPI are probably broken or old saved values
     if (Number.isFinite(savedDpi) && savedDpi > 20 && savedDpi < 2000) {
       calibrationDpi.value = savedDpi
       attachCalibrationListeners()

@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: MarkControls.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="mark-controls">
     <button class="control-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -107,11 +113,12 @@
     shapeColor.value = e.target.value
   }
 
+  // open the hidden color picker from code
   function openPicker() {
     picker.value?.click()
   }
 
-  const onEnter = (el) => {
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
     const target = el.scrollHeight
@@ -123,28 +130,45 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
-  watch(() => props.thickness, v => (shapeThickness.value = v))
-  watch(() => props.color, v => (shapeColor.value = v))
-  watch(() => props.shape, v => (shapeType.value = v))
+  // props cannot be changed here, so we use local values and keep them synced
+  watch(() => props.thickness, (newValue) => {
+    shapeThickness.value = newValue
+  })
 
-  watch(shapeThickness, v => emit('update:thickness', v))
-  watch(shapeColor, v => emit('update:color', v))
-  watch(shapeType, v => emit('update:shape', v))
+  watch(() => props.color, (newValue) => {
+    shapeColor.value = newValue
+  })
+
+  watch(() => props.shape, (newValue) => {
+    shapeType.value = newValue
+  })
+
+  watch(shapeThickness, (newValue) => {
+    emit('update:thickness', newValue)
+  })
+
+  watch(shapeColor, (newValue) => {
+    emit('update:color', newValue)
+  })
+  
+  watch(shapeType, (newValue) => {
+    emit('update:shape', newValue)
+  })
 </script>
 
 <style scoped>

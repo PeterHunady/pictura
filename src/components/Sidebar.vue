@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: Sidebar.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div :class="['sidebar-wrapper bg-neutral100', { sidebarClosed }]" :style="sidebarStyle">
     <button class="toggle-btn bg-neutral100" @click="sidebarClosed = !sidebarClosed">
@@ -146,68 +152,78 @@
   ])
 
   const sidebarStyle = computed(() => {
-    const top = (props.topGap && String(props.topGap).trim()) ? props.topGap : '0px'
-    return { top, height: `calc(100vh - ${top})`}
+    let top = '0px'
+    if (props.topGap && props.topGap.trim()) {
+      top = props.topGap
+    }
+    return { top: top, height: `calc(100vh - ${top})` }
   })
 
   const sidebarClosed = ref(props.modelValue)
   const openTool = ref(null)
 
-  const toggleTool = (toolName) => {
+  // only blur and mark use the canvas directly, the other tools are just panels
+  function toggleTool(toolName) {
     if (openTool.value === toolName) {
       openTool.value = null
     } else {
       openTool.value = toolName
     }
 
-    const isLiveTool = openTool.value === 'blur' || openTool.value === 'mark'
-    emit('set-active-tool', isLiveTool ? openTool.value : null)
+    if (openTool.value === 'blur' || openTool.value === 'mark') {
+      emit('set-active-tool', openTool.value)
+    } else {
+      emit('set-active-tool', null)
+    }
   }
 
   const sidebarContent = ref(null)
   const isAtBottom = ref(false)
   const showScrollArrow = ref(false)
 
-  const handleScroll = () => {
-    const el = sidebarContent.value
-    if (!el) {
+  // use a small limit so the bottom state does not change too much
+  function handleScroll() {
+    const content = sidebarContent.value
+    if (!content) {
       return
     }
 
     const threshold = 10
-    const { scrollTop, scrollHeight, clientHeight } = el
+    const scrollTop = content.scrollTop
+    const scrollHeight = content.scrollHeight
+    const clientHeight = content.clientHeight
     isAtBottom.value = scrollTop + clientHeight >= scrollHeight - threshold
     showScrollArrow.value = scrollHeight > clientHeight + 5
   }
 
-  const scrollAction = () => {
-    const el = sidebarContent.value
-    if (!el) {
+  function scrollAction() {
+    const content = sidebarContent.value
+    if (!content) {
       return
     }
 
     if (isAtBottom.value) {
-      el.scrollTo({ top: 0, behavior: 'smooth' })
+      content.scrollTo({ top: 0, behavior: 'smooth' })
     } else {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+      content.scrollTo({ top: content.scrollHeight, behavior: 'smooth' })
     }
   }
 
   let resizeObserver = null
   let mutationObserver = null
 
-  watch(() => props.modelValue, v => (sidebarClosed.value = v))
+  watch(() => props.modelValue, (newValue) => {
+    sidebarClosed.value = newValue
+  })
 
-  watch(sidebarClosed, v => {
-    emit('update:modelValue', v)
+  watch(sidebarClosed, (isClosed) => {
+    emit('update:modelValue', isClosed)
 
-    if (v) {
+    if (isClosed) {
       openTool.value = null
       emit('set-active-tool', null)
     }
   })
-
-  watch(() => props.meta, meta => { if (!meta && window.innerWidth < 768) sidebarClosed.value = true })
 
   watch(() => props.activeTool, (tool) => {
     if (openTool.value === 'blur' && tool !== 'blur') { 
@@ -225,17 +241,26 @@
       return
     }
 
-    const update = () => nextTick(() => handleScroll())
+    const update = () => {
+      nextTick(() => {
+        handleScroll()
+      })
+    }
     handleScroll()
     el.addEventListener('scroll', handleScroll)
     window.addEventListener('resize', handleScroll)
 
+    // watch panel changes, because opening or closing them changes the scroll height
     resizeObserver = new ResizeObserver(update)
     resizeObserver.observe(el)
     mutationObserver = new MutationObserver(update)
     mutationObserver.observe(el, { childList: true, subtree: true, attributes: true })
 
-    watch(() => props.meta, () => nextTick(() => handleScroll()), { deep: true })
+    watch(() => props.meta, () => {
+      nextTick(() => {
+        handleScroll()
+      })
+    }, { deep: true })
   })
 
   onBeforeUnmount(() => {
@@ -320,7 +345,6 @@
     padding: 1rem 1.25rem 1rem 1rem;
     overflow-y: auto;
     overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
   }
 
   .icon-btn {
@@ -431,7 +455,7 @@
     position: fixed;
     bottom: 45px;
     align-self: flex-end;
-    right: 0px;
+    right: -8px;
     width: 36px;
     height: 36px;
     display: flex;

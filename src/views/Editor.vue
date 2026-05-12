@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: Editor.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
     <div class="app-container">
         <TopBar
@@ -101,12 +107,16 @@
     import Sidebar from '@/components/Sidebar.vue'
     import PdfPageDialog from '@/components/PdfPageDialog.vue'
     import TopBar from '@/components/Topbar.vue'
-    import * as analytics from '@/analytics'
+    import * as analytics from '@/statistics/analytics'
 
     const sidebarClosed = ref(false)
-    const rightGap = computed(() =>
-        sidebarClosed.value ? '30px' : 'min(30vw, 300px)'
-    )
+    const rightGap = computed(function() {
+        if (sidebarClosed.value) {
+            return '30px'
+        } else {
+            return 'min(30vw, 300px)'
+        }
+    })
 
     const topGap = '48px'
     const initialDoc = ref(null)
@@ -139,7 +149,9 @@
     let exportTimer = null
     const isEditing = ref(false)
     const lastFileId = ref(null)
-    const isCalibrated = computed(() => calibrationDpi.value != null)
+    const isCalibrated = computed(function() {
+        return calibrationDpi.value != null
+    })
 
     const lastGrayscaleStrength = ref(null)
     const lastBgColor = ref(null)
@@ -149,8 +161,6 @@
     const markThickness = ref(4)
     const markColor = ref('#ff0000')
     const markShape = ref('rect')
-
-    // --- Helpers ---
 
     function detectFileFormat(meta) {
         const name = (meta?.name || '').toLowerCase()
@@ -172,17 +182,24 @@
     }
 
     function recordAction(name, data) {
-        actionsPerformed.value.push({ t: name, ...(data || {}) })
+        const entry = { t: name }
+        if (data) {
+            Object.assign(entry, data)
+        }
+        actionsPerformed.value.push(entry)
     }
 
-    // --- File / Document ---
+    // File
 
     function metaUpdate(meta) {
         imageMeta.value = meta
         cropWidth.value = meta?.width || 0
         cropHeight.value = meta?.height || 0
 
+        // docSig is a stable file id from ImageArea, if it is missing, use name, size, and date instead
         const fileId = meta?.docSig || `${meta?.name}|${meta?.size}|${meta?.lastModified}`
+        
+        // isEditing stops edits like crop or grayscale from looking like a new file load
         const isNewFile = fileId !== lastFileId.value && !isEditing.value
 
         if (isNewFile) {
@@ -197,9 +214,13 @@
             analytics.setSourceFormat?.(fileFormat)
 
             initialDoc.value = {
-                name: meta?.name, type: meta?.type, size: meta?.size,
-                width: meta?.width, height: meta?.height,
-                pages: meta?.pages || 1, page: meta?.page || 1
+                name: meta?.name,
+                type: meta?.type,
+                size: meta?.size,
+                width: meta?.width,
+                height: meta?.height,
+                pages: meta?.pages || 1,
+                page: meta?.page || 1
             }
 
             lastGrayscaleStrength.value = null
@@ -207,6 +228,7 @@
             activeTool.value = null
         }
 
+        // show the page picker only when a multi-page PDF is loaded for the first time
         if (meta?.type === 'application/pdf' && (meta.pages || 1) > 1 && meta.page === 1 && meta.docSig !== lastPdfFileId.value && !meta.noGallery) {
             const pdfFileId = meta.docSig || `${meta.name}|${meta.size}|${meta.lastModified}`
             if (pdfFileId !== lastPdfFileId.value) {
@@ -255,7 +277,7 @@
         activeTool.value = null
     }
 
-    // --- History ---
+    // History
 
     function onUndo() {
         imageArea.value?.undo?.()
@@ -275,15 +297,15 @@
         activeTool.value = null
     }
 
-    // --- Crop ---
+    // Crop
 
     function setCropVisible(visible) {
         imageArea.value?.setOverlayVisible?.(visible)
     }
 
-    function overlayUpdate({ width, height }) {
-        cropWidth.value = width
-        cropHeight.value = height
+    function overlayUpdate(overlay) {
+        cropWidth.value = overlay.width
+        cropHeight.value = overlay.height
         exportSizeDelay(250)
     }
 
@@ -304,8 +326,9 @@
         recordAction('crop_apply', { width: cropWidth.value, height: cropHeight.value })
     }
 
-    // --- Background Color ---
+    // Background Color
 
+    // null means the image has transparent background, so there is no solid color
     function backgroundColorUpdate(hex) {
         if (hex === null) {
             bgColor.value = '#ffffff'
@@ -335,7 +358,7 @@
         imageArea.value?.setBackgroundColor(color)
         lastBgColor.value = color
         exportSizeDelay(120)
-        recordAction('bgcolor_apply', { color })
+        recordAction('bgcolor_apply', { color: color })
     }
 
     function removeBackground() {
@@ -346,7 +369,7 @@
         recordAction('remove_background')
     }
 
-    // --- Grayscale ---
+    // Grayscale
 
     function previewGrayscale(opts) {
         imageArea.value?.previewGrayscale(opts)
@@ -360,11 +383,11 @@
         isEditing.value = true
         imageArea.value?.endPreviewGrayscale()
         imageArea.value?.applyGrayscale(opts)
-        lastGrayscaleStrength.value = opts?.strength ?? null
+        lastGrayscaleStrength.value = opts ? opts.strength : null
         recordAction('grayscale_apply', opts || {})
     }
 
-    // --- JPEG Artifacts ---
+    // JPEG Artifacts
 
     function highlightArtifacts(color = '#00E5FF') {
         const artifactsParameters = { diffThresh: 1, lowEdge: 40, highEdge: 160, gradLimit: 120 }
@@ -379,7 +402,7 @@
         recordAction('fix_jpeg_artifacts')
     }
 
-    // --- Blur Tool ---
+    // Blur Tool
 
     function blurStroke(data) {
         recordAction('blur_stroke', {
@@ -388,7 +411,7 @@
         })
     }
 
-    // --- Mark Tool ---
+    // Mark Tool
 
     function setActiveTool(toolName) {
         activeTool.value = toolName
@@ -404,9 +427,13 @@
         })
     }
 
-    // --- Scale / Zoom / Calibration ---
+    // Scale, zoom, calibration
 
-    function updateScaleInfo({ displayScale: newScale, referenceWidthMm: refWidth, minDisplayScale, maxDisplayScale }) {
+    function updateScaleInfo(scaleInfo) {
+        const newScale = scaleInfo.displayScale
+        const refWidth = scaleInfo.referenceWidthMm
+        const minDisplayScale = scaleInfo.minDisplayScale
+        const maxDisplayScale = scaleInfo.maxDisplayScale
         displayScale.value = newScale
         referenceWidthMm.value = refWidth
 
@@ -449,9 +476,10 @@
         recordAction('calibration_cleared')
     }
 
-    // --- Export ---
+    // Export
 
-    async function updateExportSize({ format }) {
+    async function updateExportSize(options) {
+        const format = options ? options.format : null
         if (format && format !== lastExportFormat.value) {
             analytics.setExportFormat?.(format)
             lastExportFormat.value = format
@@ -461,7 +489,7 @@
 
         try {
             const exportResult = await imageArea.value?.prepareExport({ format: lastExportFormat.value })
-            exportBytes.value = exportResult?.sizeBytes ?? null
+            exportBytes.value = exportResult ? exportResult.sizeBytes : null
         } finally {
             exportLoading.value = false
         }
@@ -476,8 +504,8 @@
         exportLoading.value = true
 
         try {
-            const { sizeBytes } = (await imageArea.value.prepareExport({format: lastExportFormat.value || 'png'})) || {}
-            exportBytes.value = sizeBytes ?? null
+            const result = await imageArea.value.prepareExport({ format: lastExportFormat.value || 'png' })
+            exportBytes.value = result ? result.sizeBytes : null
         } finally {
             exportLoading.value = false
         }
@@ -488,7 +516,9 @@
         exportTimer = setTimeout(refreshExportSize, delay)
     }
 
-    async function exportFile({ name, format }) {
+    async function exportFile(options) {
+        const name = options ? options.name : null
+        const format = options ? options.format : null
         const targetFormat = format || lastExportFormat.value || 'png'
         const exportResult = await imageArea.value?.prepareExport({ format: targetFormat })
 
@@ -496,9 +526,15 @@
             return
         }
 
+        let exportedBytes = null
+        if (exportResult && exportResult.sizeBytes) {
+            exportedBytes = exportResult.sizeBytes
+        } else if (exportResult && exportResult.blob) {
+            exportedBytes = exportResult.blob.size
+        }
         recordAction('export', {
             format: targetFormat,
-            bytes: exportResult?.sizeBytes ?? exportResult?.blob?.size ?? null
+            bytes: exportedBytes
         })
 
         if (!analytics.hasActive?.()) {
@@ -513,32 +549,38 @@
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
-        setTimeout(() => URL.revokeObjectURL(url), 100)
+        
+        // wait a short time before removing the URL, so the download can start
+        setTimeout(function() {
+            URL.revokeObjectURL(url)
+        }, 100)
         analytics.endSession({ actions: actionsPerformed.value })
         actionsPerformed.value = []
     }
 
-    // --- Lifecycle ---
-
-    onMounted(async () => {
+    // get the file that was dropped on the landing page
+    onMounted(async function() {
         const file = consumePendingFile()
 
         if (!file) {
             return
         }
 
+        // wait for ImageArea to be ready before using its methods
         await nextTick()
         if (imageArea.value?.loadExternalFile) {
             await imageArea.value.loadExternalFile(file)
         }
     })
 
-    onMounted(() => {
+    onMounted(function() {
         if (typeof window === 'undefined') {
             return
         }
 
         analytics.bindUnloadOnce?.()
+        
+        // restore the DPI calibration from the last session if it looks like a sane value
         const saved = parseFloat(localStorage.getItem('imageDrop.cssBaseDpi'))
 
         if (Number.isFinite(saved) && saved > 20 && saved < 2000) {
@@ -546,7 +588,9 @@
         }
     })
 
-    onUnmounted(() => clearTimeout(exportTimer))
+    onUnmounted(function() {
+        clearTimeout(exportTimer)
+    })
 </script>
 
 <style>

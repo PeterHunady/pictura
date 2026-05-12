@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: CropControls.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="resize">
     <button class="resize-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -64,7 +70,7 @@
     }
   }
 
-  const onEnter = (el) => {
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
 
@@ -77,37 +83,41 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
-  watch(() => props.meta, m => {
-      displayWidth.value = m?.width  ? Math.round(m.width) : 0
-      displayHeight.value = m?.height ? Math.round(m.height) : 0
-    }, { immediate: true }
-  )
+  // fill the shown values when the component starts
+  watch(() => props.meta, (newMeta) => {
+    displayWidth.value = newMeta?.width ? Math.round(newMeta.width) : 0
+    displayHeight.value = newMeta?.height ? Math.round(newMeta.height) : 0
+  }, { immediate: true })
 
-  watch(() => [props.initialSize.width, props.initialSize.height], ([nw, nh]) => {
-    if (nw > 0 && nh > 0 && props.meta) {
-      displayWidth.value = Math.round(Math.min(nw, props.meta.width))
-      displayHeight.value = Math.round(Math.min(nh, props.meta.height))
-    }}, { immediate: true }
-  )
+  // keep initialSize inside the real image size, because the overlay can go outside the image
+  watch(() => props.initialSize, () => {
+    const width = props.initialSize.width
+    const height = props.initialSize.height
+    
+    if (width > 0 && height > 0 && props.meta) {
+      displayWidth.value = Math.round(Math.min(width, props.meta.width))
+      displayHeight.value = Math.round(Math.min(height, props.meta.height))
+    }
+  }, { immediate: true, deep: true })
 
-  watch([displayWidth, displayHeight], ([nw, nh]) => {
-    if (nw > 0 && nh > 0) {
-      emit('preview', { width: nw, height: nh })
+  watch([displayWidth, displayHeight], () => {
+    if (displayWidth.value > 0 && displayHeight.value > 0) {
+      emit('preview', { width: displayWidth.value, height: displayHeight.value })
     }
   })
 </script>

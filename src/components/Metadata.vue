@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: Metadata.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="metadata">
     <button class="metadata-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -46,7 +52,10 @@
     }
 
     const kb = bytes / 1024
-    return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`
+    if (kb < 1024) {
+      return `${kb.toFixed(1)} KB`
+    }
+    return `${(kb / 1024).toFixed(1)} MB`
   }
 
   const onEnter = (el) => {

@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: main.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import './assets/main.css'
 
 import { createApp } from 'vue'

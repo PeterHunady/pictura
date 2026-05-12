@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: PdfPageDialog.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="backdrop" @click.self="$emit('cancel')">
     <div class="modal">
@@ -46,28 +52,44 @@
     })
 
     const emit = defineEmits(['update:modelValue', 'confirm', 'cancel'])
-    const { getDocument } = pdfjsLib
     const selectedPage = ref(props.modelValue || 1)
     const pageThumbnails = ref({})
 
+    // make small preview images from PDF pages
     async function renderPageThumbnails () {
         pageThumbnails.value = {}
-        
+
         try {
-            const pdf = await getDocument({ url: props.src }).promise
-            const count = Math.max(1, Math.min(props.pages, pdf.numPages))
+            const pdf = await pdfjsLib.getDocument({ url: props.src }).promise
+            // keep the count inside the real number of PDF pages
+            let count = props.pages
+            if (count > pdf.numPages) {
+                count = pdf.numPages
+            }
+            if (count < 1) {
+                count = 1
+            }
 
             for (let p = 1; p <= count; p++) {
                 const page = await pdf.getPage(p)
                 const defaultViewport = page.getViewport({ scale: 1 })
+
+                // make the page smaller, so the preview fits the wanted width
                 const scale = props.thumbWidth / defaultViewport.width
                 const exportViewport = page.getViewport({ scale })
                 const canvas = document.createElement('canvas')
 
-                canvas.width = Math.max(1, Math.round(exportViewport.width))
-                canvas.height = Math.max(1, Math.round(exportViewport.height))
+                canvas.width = Math.round(exportViewport.width)
+                if (canvas.width < 1) {
+                    canvas.width = 1
+                }
+                canvas.height = Math.round(exportViewport.height)
+                if (canvas.height < 1) {
+                    canvas.height = 1
+                }
                 await page.render({ canvasContext: canvas.getContext('2d'), viewport: exportViewport }).promise
-                pageThumbnails.value = { ...pageThumbnails.value, [p]: canvas.toDataURL('image/png') }
+
+                pageThumbnails.value[p] = canvas.toDataURL('image/png')
             }
         }catch (e) {
             console.error('Thumb render failed:', e)
@@ -81,11 +103,29 @@
         emit('confirm', selectedPage.value)
     }
 
-    watch(() => props.modelValue, v => { selectedPage.value = v || 1 })
-    watch(selectedPage, v => emit('update:modelValue', v))
-    onMounted(renderPageThumbnails)
-    watch(() => props.src, renderPageThumbnails)
-    watch(() => props.pages, renderPageThumbnails)
+    watch(() => props.modelValue, (newValue) => {
+        if (newValue) {
+            selectedPage.value = newValue
+        } else {
+            selectedPage.value = 1
+        }
+    })
+
+    watch(selectedPage, (newValue) => {
+        emit('update:modelValue', newValue)
+    })
+
+    onMounted(() => {
+        renderPageThumbnails()
+    })
+
+    watch(() => props.src, () => {
+        renderPageThumbnails()
+    })
+    
+    watch(() => props.pages, () => {
+        renderPageThumbnails()
+    })
 </script>
 
 <style scoped>

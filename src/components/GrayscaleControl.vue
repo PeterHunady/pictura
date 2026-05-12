@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: GrayscaleControl.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="grayscale">
     <button class="toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -54,8 +60,21 @@
     appliedStrength: { type: Number, default: null }
   })
 
-  function getStrength (percent) {
-    return Math.max(0, Math.min(1, (percent ?? 0) / 100))
+  // slider uses 0–100%, but the composable needs a value from 0 to 1
+  function getStrength(percent) {
+    if (percent == null) {
+      percent = 0
+    }
+
+    let value = percent / 100
+    if (value < 0) {
+      value = 0
+    }
+
+    if (value > 1) {
+      value = 1
+    }
+    return value
   }
 
   function apply () {
@@ -64,17 +83,26 @@
   }
 
   function setIntensity() {
-    if (!props.isOpen) return
+    if (!props.isOpen) {
+      return
+    }
 
     if (props.appliedStrength == null) {
       intensity.value = 0
     } else {
-      const validStrength = Math.max(0, Math.min(1, props.appliedStrength))
+      let validStrength = props.appliedStrength
+      if (validStrength < 0) {
+        validStrength = 0
+      }
+      
+      if (validStrength > 1) {
+        validStrength = 1
+      }
       intensity.value = Math.round(validStrength * 100)
     }
   }
 
-  const onEnter = (el) => {
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
     const target = el.scrollHeight
@@ -86,27 +114,29 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
-  watch(intensity, (v) => {
+  // send preview only when the panel is open
+  watch(intensity, (newValue) => {
     if (props.isOpen) {
-      emit('preview', { strength: getStrength(v) })
+      emit('preview', { strength: getStrength(newValue) })
     }
   })
 
+  // when opening, set the slider to the last used value, and stop preview when closing
   watch(() => props.isOpen, (newVal, oldVal) => {
     if (!oldVal && newVal) {
       setIntensity()
@@ -121,6 +151,7 @@
     setIntensity()
   })
 
+  // stop the CSS filter preview if the component is removed while the panel is open
   onBeforeUnmount(() => emit('end-preview'))
 </script>
 

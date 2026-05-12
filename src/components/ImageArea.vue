@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: ImageArea.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div
     class="dropField"
@@ -202,7 +208,6 @@
   })
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker
-  const { getDocument } = pdfjsLib
   const preview = ref(null)
   const isBusy = ref(false)
   const originalPdf  = ref(null)
@@ -218,15 +223,15 @@
   const editCanvas = ref(null)
   const toolCanvas = ref(null)
 
-  const blurActive = computed(() => props.activeTool === 'blur')
-  const markActive = computed(() => props.activeTool === 'mark')
-  const liveToolActive = computed(() => blurActive.value || markActive.value)
+  const blurActive = computed(function() { return props.activeTool === 'blur' })
+  const markActive = computed(function() { return props.activeTool === 'mark' })
+  const liveToolActive = computed(function() { return blurActive.value || markActive.value })
 
-  const blurRadius = computed(() => props.blurRadius)
-  const blurIntensity = computed(() => props.blurIntensity)
-  const markThickness = computed(() => props.markThickness)
-  const markColor = computed(() => props.markColor)
-  const markShape = computed(() => props.markShape)
+  const blurRadius = computed(function() { return props.blurRadius })
+  const blurIntensity = computed(function() { return props.blurIntensity })
+  const markThickness = computed(function() { return props.markThickness })
+  const markColor = computed(function() { return props.markColor })
+  const markShape = computed(function() { return props.markShape })
 
   const currentPage = ref(1)
   const totalPages = ref(1)
@@ -237,13 +242,39 @@
   const basePixelWidth = ref(0)
   const screenDPI = ref(96)
 
-  const maxW = computed(() => isPdf.value ? (pdfCanvas.value?.width  || 1) : (imgEl.value?.naturalWidth  || 1))
-  const maxH = computed(() => isPdf.value ? (pdfCanvas.value?.height || 1) : (imgEl.value?.naturalHeight || 1))
+  const maxW = computed(function() {
+    if (isPdf.value) {
+      if (pdfCanvas.value && pdfCanvas.value.width) {
+        return pdfCanvas.value.width
+      }
+      return 1
+    } else {
+      if (imgEl.value && imgEl.value.naturalWidth) {
+        return imgEl.value.naturalWidth
+      }
+      return 1
+    }
+  })
+
+  const maxH = computed(function() {
+    if (isPdf.value) {
+      if (pdfCanvas.value && pdfCanvas.value.height) {
+        return pdfCanvas.value.height
+      }
+      return 1
+    } else {
+      if (imgEl.value && imgEl.value.naturalHeight) {
+        return imgEl.value.naturalHeight
+      }
+      return 1
+    }
+  })
+
   const originalBackground = ref({ r: 255, g: 255, b: 255 })
   const emit = defineEmits(['update:preview','update:meta','update:overlay', 'update:bgcolor', 'update:scale', 'update:has-alpha', 'editing', 'blur-stroke', 'mark-shape'])
 
   const PDF_PREVIEW_DPI = 600;
-  const MAX_CANVAS_PIXELS = 25e6;
+  const MAX_CANVAS_PIXELS = 25000000;
   const pdfRenderScale = ref(1);
   const previewWrap = ref(null)
 
@@ -257,7 +288,8 @@
   const maxScalePercent = ref(0)
   const highlightOn = ref(false)
 
-  let clearBackgroundPreview = () => {}
+  // empty functions, replaced later by real composable functions
+  let clearBackgroundPreview = function() {}
 
   const panzoomComposable = usePanzoom({
     isPdf,
@@ -274,7 +306,7 @@
     minScalePercent,
     maxScalePercent,
     highlightOn,
-    endPreviewBackgroundColor: () => clearBackgroundPreview(),
+    endPreviewBackgroundColor: function() { clearBackgroundPreview() }
   })
 
   const {
@@ -320,12 +352,12 @@
   } = calibrationComposable
 
   const overlayComposable = useOverlay({
+    panzoom: getPanzoom,
     emit,
     maxW,
     maxH,
     canvasWrapper,
     initialScale,
-    panzoom: getPanzoom,
     pdfCanvas,
     pdfRenderScale
   })
@@ -342,7 +374,7 @@
     showOverlay,
     hideOverlay,
     setOverlayVisible,
-    startResize,
+    startResize
   } = overlayComposable
 
   const overlayX = overlayXComp
@@ -351,7 +383,7 @@
   const overlayH = overlayHComp
   const overlayVisible = overlayVisibleComp
 
-  let backgroundCheck = () => {}
+  let backgroundCheck = function() {}
 
   const historyComposable = useHistory({
     isPdf,
@@ -366,9 +398,9 @@
     renderPdfPage,
     setupOverlay,
     setHasAlpha,
-    detectBackground: () => backgroundCheck(),
     initPanzoom,
-    imgTransparent
+    imgTransparent,
+    detectBackground: function() { backgroundCheck() }
   })
 
   const {
@@ -377,11 +409,12 @@
     redo,
     resetToOriginal,
     saveOriginalSnapshot,
-    clearHistory,
+    clearHistory
   } = historyComposable
 
   let isSyncing = false
 
+  // save the current pan and zoom, so the view does not jump after an edit
   async function imageLoaded() {
     const panzoom = getPanzoom()
     const savedScale = panzoom ? displayScale.value : null
@@ -395,6 +428,7 @@
       setDisplayScale(savedScale)
       await nextTick()
       const newPanzoom = getPanzoom()
+
       if (newPanzoom) {
         newPanzoom.moveTo(savedTransform.x, savedTransform.y)
       }
@@ -418,6 +452,7 @@
     centerImage()
   }
 
+  // isSyncing prevents the two calibration inputs from triggering each other in a loop
   function syncCardFromLine() {
     if (isSyncing) {
       return
@@ -442,11 +477,19 @@
 
       if (containerWidth > 0) {
         const newSliderValue = (cardWidth / containerWidth) * 100
-        cardSliderValue.value = Math.max(30, Math.min(120, Math.round(newSliderValue)))
+        let rounded = Math.round(newSliderValue)
+        if (rounded < 30) {
+          rounded = 30
+        }
+
+        if (rounded > 120) {
+          rounded = 120
+        }
+        cardSliderValue.value = rounded
       }
     }
 
-    nextTick(() => {
+    nextTick(function() {
       isSyncing = false
     })
   }
@@ -472,7 +515,7 @@
       calibrationMeasured.value = Math.round(newMeasuredMm * 10) / 10
     }
 
-    nextTick(() => {
+    nextTick(function() {
       isSyncing = false
     })
   }
@@ -506,7 +549,7 @@
     renderPdfPage,
     setHasAlpha,
     pushHistory,
-    currentPage,
+    currentPage
   })
 
   const {
@@ -547,7 +590,7 @@
     pushHistory,
     showOverlay,
     currentPage,
-    detectBackground,
+    detectBackground
   })
 
   const {
@@ -655,19 +698,22 @@
     }
   }
 
+  // for raster images we have to draw into a temp canvas first, because getImageData cannot be used on an img element
   function getSourceCanvas() {
-    if (isPdf.value && pdfCanvas.value?.width) {
+    if (isPdf.value && pdfCanvas.value && pdfCanvas.value.width) {
       return pdfCanvas.value
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) {
+    if (!img || !img.naturalWidth) {
       return null
     }
+
     const tempCanvas = document.createElement('canvas')
     tempCanvas.width = img.naturalWidth
     tempCanvas.height = img.naturalHeight
-    tempCanvas.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0)
+    const context = tempCanvas.getContext('2d', { willReadFrequently: true })
+    context.drawImage(img, 0, 0)
     return tempCanvas
   }
 
@@ -684,7 +730,7 @@
     originalFileSize,
     originalLastModified,
     currentPage,
-    renderPdfPage,
+    renderPdfPage
   })
 
   const {
@@ -739,17 +785,24 @@
 
   let resizeObserver = null
 
-  onUnmounted(() => {
-    resizeObserver?.disconnect()
+  onUnmounted(function() {
+    if (resizeObserver) {
+      resizeObserver.disconnect()
+    }
+
     resizeObserver = null
     detachCalibrationListeners()
     disposePanzoom()
-
     document.removeEventListener('paste', handlePaste)
   })
 
+  // always return a copy, because composables can change the data
   function pdfBytes () {
-    return originalPdf.value instanceof Uint8Array ? originalPdf.value.slice() : new Uint8Array(originalPdf.value)
+    if (originalPdf.value instanceof Uint8Array) {
+      return originalPdf.value.slice()
+    }
+
+    return new Uint8Array(originalPdf.value)
   }
 
   function makeFileSignature() {
@@ -771,7 +824,10 @@
   }
 
   function handlePaste(e) {
-    const items = e.clipboardData?.items
+    if (!e.clipboardData) {
+      return
+    }
+    const items = e.clipboardData.items
     if (!items) {
       return
     }
@@ -792,7 +848,7 @@
 
         const file = new File([blob], `pasted-image-${Date.now()}.png`, { type: blob.type })
         isPdf.value = false
-        withBusy(() => loadImage(file))
+        withBusy(function() { return loadImage(file) })
         break
       }
     }
@@ -810,11 +866,21 @@
     }
 
     isPdf.value = file.type === 'application/pdf'
-    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
+    if (isPdf.value) {
+      await withBusy(function() { return loadPdf(file) })
+    } else {
+      await withBusy(function() { return loadImage(file) })
+    }
   }
 
   async function handleDrop(e) {
-    const file = [...e.dataTransfer.files].find(f => f.type.startsWith('image/') || f.type === 'application/pdf')
+    let file = null
+    for (const f of e.dataTransfer.files) {
+      if (f.type.startsWith('image/') || f.type === 'application/pdf') {
+        file = f
+        break
+      }
+    }
 
     if (!file) {
       return
@@ -825,7 +891,11 @@
     }
 
     isPdf.value = file.type === 'application/pdf'
-    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
+    if (isPdf.value) {
+      await withBusy(function() { return loadPdf(file) })
+    } else {
+      await withBusy(function() { return loadImage(file) })
+    }
   }
 
   async function loadExternalFile(file) {
@@ -834,24 +904,28 @@
     }
 
     isPdf.value = file.type === 'application/pdf'
-    await withBusy(() => isPdf.value ? loadPdf(file) : loadImage(file))
+    if (isPdf.value) {
+      await withBusy(function() { return loadPdf(file) })
+    } else {
+      await withBusy(function() { return loadImage(file) })
+    }
   }
 
   function loadImage(file) {
-    return new Promise((resolve) => {
+    return new Promise(function(resolve) {
       originalFileName.value = file.name
       originalFileType.value = file.type
       originalFileSize.value = file.size
       originalLastModified.value = file.lastModified || Date.now()
       const reader = new FileReader()
 
-      reader.onload = event => {
+      reader.onload = function(event) {
         preview.value = event.target.result
         emit('update:preview', preview.value)
         const img = new Image()
         img.src = preview.value
 
-        img.onload = () => {
+        img.onload = function() {
           emit('update:meta', {
             name: file.name, type: file.type, size: file.size,
             width: img.naturalWidth, height: img.naturalHeight,
@@ -880,7 +954,7 @@
 
   async function loadPdf (file) {
     currentPage.value = 1
-    totalPages.value  = 1
+    totalPages.value = 1
     suppressGalleryOnce.value = false
 
     const arrayBuffer = await file.arrayBuffer()
@@ -907,12 +981,22 @@
     const savedScale = panzoom ? displayScale.value : null
     const savedTransform = panzoom ? panzoom.getTransform() : null
 
-    const pdf = await getDocument({ data: pdfBytes() }).promise
-    totalPages.value  = pdf.numPages
-    currentPage.value = Math.min(Math.max(1, pageNo), totalPages.value)
+    const pdf = await pdfjsLib.getDocument({ data: pdfBytes() }).promise
+    totalPages.value = pdf.numPages
+    let pageNum = pageNo
+    if (pageNum < 1) {
+      pageNum = 1
+    }
 
+    if (pageNum > totalPages.value) {
+      pageNum = totalPages.value
+    }
+
+    currentPage.value = pageNum
     const page = await pdf.getPage(currentPage.value)
     const defaultViewport = page.getViewport({ scale: 1 })
+    
+    // PDF uses 72 points per inch, so we limit the scale to stay inside the canvas size limit
     const dpiScale = Math.max(1, dpi / 72)
     const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
     const targetScale = Math.min(dpiScale, maxScaleByPixels)
@@ -921,7 +1005,7 @@
     pdfRenderScale.value = targetScale
 
     const canvas = pdfCanvas.value
-    canvas.width  = Math.round(viewport.width)
+    canvas.width = Math.round(viewport.width)
     canvas.height = Math.round(viewport.height)
 
     await page.render({
@@ -948,7 +1032,7 @@
     suppressGalleryOnce.value = false
     const isAlpha = madeTransparentPdf.value || canvasHasAlpha(canvas)
     setHasAlpha(isAlpha)
-    checkerOn.value = !!isAlpha
+    checkerOn.value = Boolean(isAlpha)
 
     if (!isAlpha) {
       detectBackground()
@@ -1018,9 +1102,17 @@
     originalBackground.value = { r: 255, g: 255, b: 255 }
     disposePanzoom()
 
-    canvasWrapper.value && Object.assign(canvasWrapper.value.style, { width:'', height:'', transform:'', backgroundColor:'' })
+    if (canvasWrapper.value) {
+      canvasWrapper.value.style.width = ''
+      canvasWrapper.value.style.height = ''
+      canvasWrapper.value.style.transform = ''
+      canvasWrapper.value.style.backgroundColor = ''
+    }
+    
     initialScale.value = 1
-    fileInput.value && (fileInput.value.value = '')
+    if (fileInput.value) {
+      fileInput.value.value = ''
+    }
 
     emit('update:preview', null)
     emit('update:meta', null)
@@ -1030,8 +1122,8 @@
   }
 
   function setHasAlpha(val) {
-    hasAlpha.value = !!val
-    checkerOn.value = !!val
+    hasAlpha.value = Boolean(val)
+    checkerOn.value = Boolean(val)
     emit('update:has-alpha', hasAlpha.value)
 
     if (canvasWrapper.value) {
@@ -1039,12 +1131,12 @@
     }
   }
 
-  onMounted(() => {
+  onMounted(function() {
     initCalibration()
 
-    resizeObserver = new ResizeObserver(() => handleWrapperResize())
+    resizeObserver = new ResizeObserver(function() { handleWrapperResize() })
 
-    watch(() => previewWrap.value, (el, oldEl) => {
+    watch(function() { return previewWrap.value }, function(el, oldEl) {
         if (!resizeObserver) {
           return
         }
@@ -1062,6 +1154,7 @@
 
   async function withBusy(fn) {
     isBusy.value = true
+    await new Promise(function(resolve) { setTimeout(resolve, 0) })
     try {
       await fn()
     } finally {
@@ -1069,23 +1162,59 @@
     }
   }
 
+  async function setBackgroundColorBusy(color) {
+    await withBusy(function() { return setBackgroundColor(color) })
+  }
+
+  async function removeBackgroundBusy() {
+    await withBusy(removeBackground)
+  }
+
+  async function cropToOverlayBusy() {
+    await withBusy(cropToOverlay)
+  }
+
+  async function highlightJpegArtifactsBusy(color, opts) {
+    await withBusy(function() { highlightJpegArtifacts(color, opts) })
+  }
+
+  async function fixJpegArtifactsBusy() {
+    await withBusy(fixJpegArtifacts)
+  }
+
+  async function applyGrayscaleBusy(strength) {
+    await withBusy(function() { return applyGrayscale(strength) })
+  }
+
+  async function undoBusy() {
+    await withBusy(undo)
+  }
+
+  async function redoBusy() {
+    await withBusy(redo)
+  }
+
+  async function resetToOriginalBusy() {
+    await withBusy(resetToOriginal)
+  }
+
   defineExpose({
     // Background operations
-    setBackgroundColor: (...args) => withBusy(() => setBackgroundColor(...args)),
-    removeBackground: () => withBusy(removeBackground),
+    setBackgroundColor: setBackgroundColorBusy,
+    removeBackground: removeBackgroundBusy,
     previewBackgroundColor,
     endPreviewBackgroundColor,
 
     // Crop operations
     previewCropToContent,
-    cropToOverlay: () => withBusy(cropToOverlay),
+    cropToOverlay: cropToOverlayBusy,
 
     // JPEG operations
-    fixJpegArtifacts: () => withBusy(fixJpegArtifacts),
-    highlightJpegArtifacts,
+    fixJpegArtifacts: fixJpegArtifactsBusy,
+    highlightJpegArtifacts: highlightJpegArtifactsBusy,
 
     // Grayscale operations
-    applyGrayscale: (...args) => withBusy(() => applyGrayscale(...args)),
+    applyGrayscale: applyGrayscaleBusy,
     previewGrayscale,
     endPreviewGrayscale,
 
@@ -1094,9 +1223,9 @@
     clearCalibration,
 
     // History
-    undo: () => withBusy(undo),
-    redo: () => withBusy(redo),
-    resetToOriginal: () => withBusy(resetToOriginal),
+    undo: undoBusy,
+    redo: redoBusy,
+    resetToOriginal: resetToOriginalBusy,
 
     // Overlay
     showOverlay,

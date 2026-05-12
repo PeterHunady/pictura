@@ -1,3 +1,9 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: FixArtifactsButton.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <div class="enhance">
     <button class="enhance-toggle bg-neutral200 bg-hover-neutral100" @click="emit('toggle')">
@@ -51,8 +57,8 @@
   })
 
   const emit = defineEmits(['fix-artifacts', 'highlight-artifacts', 'toggle'])
-
-  const onEnter = (el) => {
+  
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
 
@@ -65,15 +71,15 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'

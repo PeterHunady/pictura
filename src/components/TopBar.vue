@@ -1,9 +1,19 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: Topbar.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
+
 <template>
   <header class="topbar" :style="{ height: topGap }">
     <div class="topbar-content">
       <div class="brand">
         <img :src="defaultLogo" alt="Logo" class="logo" />
       </div>
+
+      <button v-if="showPrivacy" class="privacy-btn" @click="privacyOpen = true" title="Privacy">
+        <img class="icon" :src="questionMarkIcon" alt="Privacy" />
+      </button>
 
       <div class="toolbar" v-if="showScale">
         <div v-if="showActions" class="actions-group">
@@ -124,11 +134,28 @@
       </div>
     </div>
   </header>
+
+  <div v-if="privacyOpen" class="privacy-backdrop" @click.self="privacyOpen = false">
+    <div class="privacy-modal">
+      <h3 class="ty-title-medium">Privacy Policy</h3>
+      <p class="ty-body-small">
+        This application uses anonymized usage statistics to better understand how people work with the app and its tools.
+      </p>
+      <p class="ty-body-small">
+        All images and documents are processed directly in your browser. They are not uploaded to any server and never leave your device.
+      </p>
+      <div class="privacy-footer">
+        <button class="privacy-close bg-red600 bg-hover-red500" @click="privacyOpen = false">Close</button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
   import { ref, watch, onMounted, onUnmounted } from 'vue'
+  defineOptions({ inheritAttrs: false })
   import defaultLogo from '@/assets/logo.png'
+  import questionMarkIcon from '@/assets/questionMark.svg'
   import undoIcon from '@/assets/undo.svg'
   import redoIcon from '@/assets/redo.svg'
   import resetIcon from '@/assets/reset.svg'
@@ -143,6 +170,7 @@
     topGap: { type: String, default: '48px' },
     showActions: { type: Boolean, default: true },
     showScale: { type: Boolean, default: false },
+    showPrivacy: { type: Boolean, default: false },
     displayScale: { type: Number, default: 100 },
     referenceWidthMm: { type: Number, default: 210 },
     isCalibrated: { type: Boolean, default: false },
@@ -156,13 +184,22 @@
     'calibrate','clear-calibration','reset-to-100',
   ])
 
+  const privacyOpen = ref(false)
   const isVisible = ref(true)
   const showCalibrationHint = ref(false)
   const scaleValue = ref(props.displayScale)
   const referenceWidth = ref(props.referenceWidthMm)
   const dropdownOpen = ref(false)
   const scaleControl = ref(null)
-  const limitScale = (v) => Math.max(props.minScale, Math.min(props.maxScale, v))
+  function limitScale(value) {
+    if (value < props.minScale) {
+      return props.minScale
+    }
+    if (value > props.maxScale) {
+      return props.maxScale
+    }
+    return value
+  }
 
   function calibrate(){
     emit('calibrate') 
@@ -201,7 +238,13 @@
   }
 
   function referenceWidthChange() {
-    referenceWidth.value = Math.max(1, Math.min(1000, referenceWidth.value))
+    if (referenceWidth.value < 1) {
+      referenceWidth.value = 1
+    }
+
+    if (referenceWidth.value > 1000) {
+      referenceWidth.value = 1000
+    }
     emit('update:reference-width', referenceWidth.value)
   }
 
@@ -211,7 +254,8 @@
     }
   }
 
-  const handleKeydown = (event) => {
+  // metaKey is for Cmd on Mac, and ctrlKey is for Ctrl on Windows or Linux
+  function handleKeydown(event) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'z') {
       event.preventDefault()
       emit('undo')
@@ -223,7 +267,7 @@
     }
   }
 
-  const onDropEnter = (el) => {
+  function onDropEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
     const target = el.scrollHeight
@@ -235,34 +279,41 @@
     })
   }
 
-  const onDropAfterEnter = (el) => {
+  function onDropAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onDropLeave = (el) => {
+  function onDropLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    el.offsetHeight
 
     el.style.transition = 'height 0.2s ease-out, opacity 0.2s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
-  watch(() => props.displayScale, v => { scaleValue.value = Math.round(v) })
+  watch(() => props.displayScale, (newValue) => {
+    scaleValue.value = Math.round(newValue)
+  })
 
-  watch(() => props.referenceWidthMm, v => { referenceWidth.value = v })
+  watch(() => props.referenceWidthMm, (newValue) => {
+    referenceWidth.value = newValue
+  })
 
+  // setTimeout(0) adds the listener after the opening click, so the dropdown does not close right away
   watch(dropdownOpen, (isOpen) => {
     if (isOpen) {
-      setTimeout(() => { document.addEventListener('click', handleClickOutside) }, 0)
+      setTimeout(function() {document.addEventListener('click', handleClickOutside)}, 0)
     } else {
       document.removeEventListener('click', handleClickOutside)
     }
   })
 
-  onMounted(() => { document.addEventListener('keydown', handleKeydown) })
+  onMounted(() => {
+    document.addEventListener('keydown', handleKeydown)
+  })
 
   onUnmounted(() => {
     document.removeEventListener('click', handleClickOutside)
@@ -546,5 +597,70 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .privacy-btn {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .privacy-btn:hover .icon {
+    opacity: 0.7;
+  }
+
+  .privacy-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .privacy-modal {
+    background: #fff;
+    border-radius: 10px;
+    padding: 16px 18px;
+    max-width: 480px;
+    width: 90%;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    color: #000;
+  }
+
+  .privacy-modal h3 {
+    color: #000;
+    margin: 0 0 16px;
+  }
+
+  .privacy-modal p {
+    color: #000;
+    line-height: 1.6;
+    margin: 0 0 12px;
+  }
+
+  .privacy-footer {
+    display: flex;
+    justify-content: center;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #eee;
+  }
+
+  .privacy-close {
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+    color: white;
   }
 </style>

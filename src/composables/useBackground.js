@@ -1,11 +1,14 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useBackground.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import { PDFDocument } from 'pdf-lib'
 import { hexToRgb, rgbToHex, dataURLtoU8, canvasHasAlpha } from './imageProcessing'
 
-const { getDocument } = pdfjsLib
 const PDF_EXPORT_DPI = 600
-const MAX_CANVAS_PIXELS = 25e6
+const MAX_CANVAS_PIXELS = 25000000
 
 export function useBackground({
   isPdf,
@@ -33,6 +36,7 @@ export function useBackground({
   const previewImg = ref(null)
   const previewOn = ref(false)
   const previewType = ref(null)
+  // save the image after background removal, so new colors do not stack on old changes
   const transparentBase = ref(null)
 
   function getSourceCanvas() {
@@ -52,6 +56,8 @@ export function useBackground({
     return tempCanvas
   }
 
+  // guess the background color from pixels near the image edges
+  // the most common similar color there is used as the background
   function detectBackground() {
     let src
 
@@ -76,15 +82,23 @@ export function useBackground({
     }
 
     const context = src.getContext('2d', { willReadFrequently: true })
-    const inset = Math.max(1, Math.round(Math.min(width, height) * 0.01))
-    const step = Math.max(1, Math.floor(Math.min(width, height) / 80))
+    const smaller = Math.min(width, height)
+    const inset = Math.max(1, Math.round(smaller * 0.01))
+    const step = Math.max(1, Math.floor(smaller / 80))
     const MIN_ALPHA = 8
 
-    const quantize = (v) => v >> 4
-    const keyOf = (r, g, b) => (quantize(r) << 8) | (quantize(g) << 4) | quantize(b)
+    // reduce color levels, so similar colors are put into the same group
+    function quantize(v) {
+      return Math.floor(v / 16)
+    }
+
+    function keyOf(r, g, b) {
+      return quantize(r) + '_' + quantize(g) + '_' + quantize(b)
+    }
+
     const sums = new Map()
 
-    const sampleRow = (y) => {
+    function sampleRow(y) {
       const row = context.getImageData(0, y, width, 1).data
       for (let x = 0; x < width; x += step) {
         const i = x * 4
@@ -112,7 +126,7 @@ export function useBackground({
       }
     }
 
-    const sampleCol = (x) => {
+    function sampleCol(x) {
       const col = context.getImageData(x, 0, 1, height).data
       for (let y = 0; y < height; y += step) {
         const i = y * 4
@@ -151,7 +165,10 @@ export function useBackground({
 
     let mainColorKey = null
     let mainColorCount = -1
-    for (const [k, bucket] of sums.entries()) {
+    for (const entry of sums.entries()) {
+      const k = entry[0]
+      const bucket = entry[1]
+
       if (bucket.count > mainColorCount) {
         mainColorCount = bucket.count
         mainColorKey = k
@@ -163,13 +180,16 @@ export function useBackground({
     const g = Math.round(mainColorBucket.G / mainColorBucket.count)
     const b = Math.round(mainColorBucket.B / mainColorBucket.count)
 
-    originalBackground.value = { r, g, b }
+    originalBackground.value = { r: r, g: g, b: b }
     emit('update:bgcolor', rgbToHex(originalBackground.value))
   }
 
+  // start from all image edges and find connected background areas
+  // use a wider limit for spreading and a stricter one for small inside background spots
   function makeBackgroundTransparent(canvas, bgRGB) {
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    const { width, height } = canvas
+    const width = canvas.width
+    const height = canvas.height
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
@@ -177,14 +197,14 @@ export function useBackground({
     const BACKGROUND_LIMIT = 2500
     const BACKGROUND_CORE_LIMIT = 300
 
-    const colorDifferenceFromBackground = (r, g, b) => { 
+    function colorDifferenceFromBackground(r, g, b) {
       const redDiff = r - bgRGB.r
       const greenDiff = g - bgRGB.g
       const blueDiff = b - bgRGB.b
       return redDiff * redDiff + greenDiff * greenDiff + blueDiff * blueDiff
     }
 
-    const isBackgroundColor = (index) => {
+    function isBackgroundColor(index) {
       const r = data[index]
       const g = data[index + 1]
       const b = data[index + 2]
@@ -196,7 +216,7 @@ export function useBackground({
       return colorDifferenceFromBackground(r, g, b) <= BACKGROUND_LIMIT
     }
 
-    const isBackgroundCore = (index) => {
+    function isBackgroundCore(index) {
       const r = data[index]
       const g = data[index + 1]
       const b = data[index + 2]
@@ -225,7 +245,7 @@ export function useBackground({
         queue.push(bottomPixel)
       }
     }
-    
+
     for (let y = 0; y < height; y++) {
       const leftIndex = (y * width) * 4
       const rightIndex = (y * width + width - 1) * 4
@@ -243,6 +263,7 @@ export function useBackground({
       }
     }
 
+    // keep spreading to nearby pixels that are close to the background color
     while (queue.length > 0) {
       const pixel = queue.shift()
       const x = pixel % width
@@ -255,7 +276,10 @@ export function useBackground({
         { nextX: x, nextY: y + 1 }
       ]
 
-      for (const { nextX, nextY } of neighbors) {
+      for (const neighbor of neighbors) {
+        const nextX = neighbor.nextX
+        const nextY = neighbor.nextY
+
         if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) {
           continue
         }
@@ -273,6 +297,7 @@ export function useBackground({
       }
     }
 
+    // second pass finds small inside background pixels that were not reached before
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const pixel = y * width + x
@@ -302,9 +327,12 @@ export function useBackground({
     return canvas.toDataURL('image/png')
   }
 
+  // replace background pixels and softly blend pixels near the background edge
+  // pixels close to the background get a small color change when they are near background pixels
   function changeBackgroundColor(canvas, bgRGB, newHexColor) {
     const context = canvas.getContext('2d', { willReadFrequently: true })
-    const { width, height } = canvas
+    const width = canvas.width
+    const height = canvas.height
     const imageData = context.getImageData(0, 0, width, height)
     const data = imageData.data
 
@@ -320,7 +348,7 @@ export function useBackground({
 
     const backgroundPixels = new Uint8Array(width * height)
 
-    const colorDifferenceFromBackground = (r, g, b) => {
+    function colorDifferenceFromBackground(r, g, b) {
       const redDiff = r - background.r
       const greenDiff = g - background.g
       const blueDiff = b - background.b
@@ -346,7 +374,9 @@ export function useBackground({
       }
     }
 
-    const mixColor = (currentColor, target, t) => Math.round(currentColor + (target - currentColor) * t)
+    function mixColor(currentColor, target, t) {
+      return Math.round(currentColor + (target - currentColor) * t)
+    }
 
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -400,6 +430,7 @@ export function useBackground({
           continue
         }
 
+        // set blend strength by how close this pixel is to the background color
         const ratio = (SOFT_EDGE_LIMIT - colorDifference) / (SOFT_EDGE_LIMIT - COLOR_LIMIT)
         const strength = 0.85
         data[index] = mixColor(r, newBackground.r, ratio * strength)
@@ -433,15 +464,25 @@ export function useBackground({
     if (isPdf.value) {
       const bytes = pdfBytes()
       const sourcePdf = await PDFDocument.load(bytes, { ignoreEncryption: true })
-      const renderedPdf = await getDocument({ data: bytes }).promise
+      const renderedPdf = await pdfjsLib.getDocument({ data: bytes }).promise
       const croppedPdf = await PDFDocument.create()
       const background = originalBackground.value
 
       const pageCount = sourcePdf.getPageCount()
-      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
+      let activeIndex = (currentPage.value || 1) - 1
+      if (activeIndex < 0) {
+        activeIndex = 0
+      }
+
+      if (activeIndex > pageCount - 1) {
+        activeIndex = pageCount - 1
+      }
 
       const rasterPage = await renderedPdf.getPage(activeIndex + 1)
       const defaultViewport = rasterPage.getViewport({ scale: 1 })
+
+      // PDF points are 72 per inch, so we scale up for a sharper raster image
+      // limit the scale so the canvas does not get too large
       const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
       const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
       const scale = Math.min(dpiScale, maxScaleByPixels)
@@ -461,7 +502,9 @@ export function useBackground({
       const pngBytes = dataURLtoU8(dataUrl)
       const pngImg = await croppedPdf.embedPng(pngBytes)
 
-      const { width: pageWidth, height: pageHeight } = sourcePdf.getPage(activeIndex).getSize()
+      const pageSize = sourcePdf.getPage(activeIndex).getSize()
+      const pageWidth = pageSize.width
+      const pageHeight = pageSize.height
       const pageIndices = sourcePdf.getPageIndices()
       const copiedPages = await croppedPdf.copyPages(sourcePdf, pageIndices)
 
@@ -496,7 +539,9 @@ export function useBackground({
     }
 
     const img = imgEl.value
-    if (!img?.naturalWidth) return
+    if (!img?.naturalWidth) {
+      return
+    }
 
     const width = img.naturalWidth
     const height = img.naturalHeight
@@ -514,8 +559,8 @@ export function useBackground({
       name: originalFileName.value,
       type: originalFileType.value,
       size: atob(dataUrl.split(',')[1]).length,
-      width,
-      height,
+      width: width,
+      height: height,
       lastModified: Date.now(),
     })
     emit('update:bgcolor', null)
@@ -526,9 +571,9 @@ export function useBackground({
   }
 
   async function canvasFromDataUrl(dataUrl) {
-    return new Promise((resolve, reject) => {
+    return new Promise(function(resolve, reject) {
       const img = new Image()
-      img.onload = () => {
+      img.onload = function() {
         const canvas = document.createElement('canvas')
         canvas.width = img.naturalWidth || img.width
         canvas.height = img.naturalHeight || img.height
@@ -536,7 +581,9 @@ export function useBackground({
         resolve(canvas)
       }
 
-      img.onerror = reject
+      img.onerror = function(error) {
+        reject(error)
+      }
       img.src = dataUrl
     })
   }
@@ -548,6 +595,7 @@ export function useBackground({
       src = getSourceCanvas()
     } else if (transparentBase.value) {
       try {
+        // use the saved transparent image, so previews do not stack over each other
         src = await canvasFromDataUrl(transparentBase.value)
       } catch (e) {
         console.error('previewBackgroundColor: base load failed', e)
@@ -562,10 +610,17 @@ export function useBackground({
     }
 
     const srcHasAlpha = canvasHasAlpha(src) || hasAlpha.value || imgTransparent.value
-    const MAX_PREVIEW_PIXELS = 2e6
+    const MAX_PREVIEW_PIXELS = 2000000
     const scale = Math.min(1, Math.sqrt(MAX_PREVIEW_PIXELS / (src.width * src.height)) || 1)
-    const previewWidth = Math.max(1, Math.round(src.width * scale))
-    const previewHeight = Math.max(1, Math.round(src.height * scale))
+
+    let previewWidth = Math.round(src.width * scale)
+    if (previewWidth < 1) {
+      previewWidth = 1
+    }
+    let previewHeight = Math.round(src.height * scale)
+    if (previewHeight < 1) {
+      previewHeight = 1
+    }
 
     const tempCanvas = document.createElement('canvas')
     tempCanvas.width = previewWidth
@@ -615,11 +670,20 @@ export function useBackground({
 
       const croppedPdf = await PDFDocument.create()
       const pageCount = sourcePdf.getPageCount()
-      const renderedPdf = await getDocument({ data: bytes }).promise
-      const activeIndex = Math.min(Math.max((currentPage.value || 1) - 1, 0), pageCount - 1)
+      const renderedPdf = await pdfjsLib.getDocument({ data: bytes }).promise
+      let activeIndex = (currentPage.value || 1) - 1
+
+      if (activeIndex < 0) {
+        activeIndex = 0
+      }
+
+      if (activeIndex > pageCount - 1) {
+        activeIndex = pageCount - 1
+      }
+
       const oldBackground = originalBackground.value || { r: 255, g: 255, b: 255 }
       const rasterPage = await renderedPdf.getPage(activeIndex + 1)
-
+      
       const defaultViewport = rasterPage.getViewport({ scale: 1 })
       const dpiScale = Math.max(1, PDF_EXPORT_DPI / 72)
       const maxScaleByPixels = Math.sqrt(MAX_CANVAS_PIXELS / (defaultViewport.width * defaultViewport.height)) || 1
@@ -662,8 +726,8 @@ export function useBackground({
       for (let i = 0; i < copiedPages.length; i++) {
         const page = copiedPages[i]
         if (i === activeIndex) {
-          const { width: pw, height: ph } = page.getSize()
-          page.drawImage(pngImg, { x: 0, y: 0, width: pw, height: ph })
+          const pageSize = page.getSize()
+          page.drawImage(pngImg, { x: 0, y: 0, width: pageSize.width, height: pageSize.height })
         }
 
         croppedPdf.addPage(page)
@@ -734,6 +798,7 @@ export function useBackground({
       setHasAlpha(false)
       imgTransparent.value = false
     } else {
+      // the image has transparency, so draw the solid color first and then draw the image over it
       const backgroundCanvas = document.createElement('canvas')
       backgroundCanvas.width = width
       backgroundCanvas.height = height
@@ -752,9 +817,11 @@ export function useBackground({
     emit('update:preview', newSrc)
     emit('update:bgcolor', hexColor)
     emit('update:meta', {
-      name:(originalFileName.value || 'image').replace(/\.[^.]+$/, '') + '-backgroundCanvas.png',
+      name: (originalFileName.value || 'image').replace(/\.[^.]+$/, '') + '-backgroundCanvas.png',
       type: 'image/png',
-      size: atob(newSrc.split(',')[1]).length, width, height,
+      size: atob(newSrc.split(',')[1]).length,
+      width: width,
+      height: height,
       lastModified: Date.now(),
     })
 

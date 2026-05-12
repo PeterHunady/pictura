@@ -1,3 +1,8 @@
+<!--
+  Author: Peter Huňady (xhunadp00)
+  File: BackgroundColorControl.vue
+  Bachelor's Thesis, VUT Brno, 2026
+-->
 
 <template>
   <div class="background-color-control">
@@ -32,7 +37,7 @@
 
               <div
                 class="color-box"
-                :style="{ backgroundColor: normalizedColor ?? '#ffffff' }"
+                :style="{ backgroundColor: normalizedColor || '#ffffff' }"
                 @click="openPicker">
               </div>
 
@@ -87,6 +92,7 @@
   ])
 
   const color = ref(props.initialColor)
+  // lastColor keeps only a valid hex color, while color can be unfinished during typing
   const lastColor = ref(null)
   const picker = ref(null)
   const normalizedColor = computed(() => formatHexColor(color.value))
@@ -102,7 +108,11 @@
     const shortHex = fileInfo.match(/^#?([0-9a-fA-F]{3})$/)
 
     if (shortHex) {
-      return ('#' + shortHex[1] .split('').map(c => c + c).join('').toLowerCase())
+      let expanded = ''
+      for (const c of shortHex[1]) {
+        expanded += c + c
+      }
+      return '#' + expanded.toLowerCase()
     }
     return null
   }
@@ -111,6 +121,7 @@
     color.value = e.target.value
   }
 
+  // open the hidden color picker from code
   function openPicker() {
     if (picker.value) {
       picker.value.click()
@@ -128,7 +139,7 @@
     emit('remove-background')
   }
 
-  const onEnter = (el) => {
+  function onEnter(el) {
     el.style.height = '0px'
     el.style.opacity = '0'
 
@@ -141,36 +152,39 @@
     })
   }
 
-  const onAfterEnter = (el) => {
+  function onAfterEnter(el) {
     el.style.height = 'auto'
     el.style.transition = ''
   }
 
-  const onLeave = (el) => {
+  function onLeave(el) {
     el.style.height = el.scrollHeight + 'px'
     el.style.opacity = '1'
-    void el.offsetHeight
+    // force a reflow so the browser registers the current height before we start collapsing
+    el.offsetHeight
 
     el.style.transition = 'height 0.3s ease-out, opacity 0.3s ease-out'
     el.style.height = '0px'
     el.style.opacity = '0'
   }
 
-  watch(color, (v) => {
+  watch(color, (newValue) => {
     if (!props.isOpen) {
       return
     }
 
-    const hx = formatHexColor(v)
+    const hx = formatHexColor(newValue)
     if (!hx) {
       return
     }
 
     lastColor.value = hx
+    // wait a short time, so preview is not called after every key press
     clearTimeout(previewTimer)
     previewTimer = setTimeout(() => emit('preview-color', hx), 80)
   })
 
+  // when opening, set the color from transparent state, applied color, or initial color
   watch(() => props.isOpen, (newVal, oldVal) => {
       if (!oldVal && newVal) {
         if (props.bgTransparent) {
@@ -191,25 +205,25 @@
     }
   )
 
-  watch(() => props.bgTransparent, (v) => {
-      if (v) {
+  watch(() => props.bgTransparent, (newValue) => {
+      if (newValue) {
         color.value = ''
         lastColor.value = null
       }
     }
   )
 
-  watch(() => props.appliedColor, (v) => {
-      if (!props.bgTransparent && v) {
-        color.value = v
-        lastColor.value = formatHexColor(v)
+  watch(() => props.appliedColor, (newValue) => {
+      if (!props.bgTransparent && newValue) {
+        color.value = newValue
+        lastColor.value = formatHexColor(newValue)
       }
     }
   )
 
-  watch(() => props.initialColor, (v) => {
+  watch(() => props.initialColor, (newValue) => {
       if (!props.bgTransparent && !props.appliedColor) {
-        color.value = v || '#ffffff'
+        color.value = newValue || '#ffffff'
         lastColor.value = formatHexColor(color.value)
       }
     }

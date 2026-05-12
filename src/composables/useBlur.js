@@ -1,8 +1,13 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useBlur.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref, watch, nextTick } from 'vue'
 import { getCanvasPosition, clearToolCanvas, prepareToolCanvas, saveCanvas } from './canvasToolUtils'
 
 const CURSOR_OUTER_LINE_WIDTH = 1.5
 const CURSOR_INNER_LINE_WIDTH = 1
+// part of the brush radius used between blur steps while dragging
 const BLUR_STEP_FRACTION = 0.5
 const MIN_BLUR_STEP_PX = 2
 
@@ -32,8 +37,14 @@ export function useBlur({
 
   function prepareBlurCanvas(force = false) {
     const prepared = prepareToolCanvas({
-      active: blurActive, isPdf, pdfCanvas, imgEl, editCanvas, toolCanvas,
-      canvasReady: blurCanvasReady, force
+      active: blurActive,
+      isPdf: isPdf,
+      pdfCanvas: pdfCanvas,
+      imgEl: imgEl,
+      editCanvas: editCanvas,
+      toolCanvas: toolCanvas,
+      canvasReady: blurCanvasReady,
+      force: force
     })
 
     if (prepared) {
@@ -42,6 +53,7 @@ export function useBlur({
     }
   }
 
+  // draw two circles, dark outside and light inside, so the cursor is easy to see
   function blurCursor(position) {
     const toolCanvasEl = toolCanvas.value
     if (!toolCanvasEl || !position) {
@@ -65,6 +77,8 @@ export function useBlur({
     context.stroke()
   }
 
+  // cut the canvas to a circle and draw it again with blur
+  // this makes only the circle area blurred
   function applyBlur(position) {
     const editCanvasEl = editCanvas.value
     if (!editCanvasEl || !position) {
@@ -84,6 +98,7 @@ export function useBlur({
     context.restore()
   }
 
+  // add blur between the last and current position to avoid gaps when the mouse moves fast
   function applyBlurAt(position) {
     if (!blurLastAppliedPosition) {
       applyBlur(position)
@@ -111,10 +126,15 @@ export function useBlur({
   function saveBlur() {
     saveCanvas({
       editCanvasEl: editCanvas.value,
-      originalFileName, isPdf, originalFileType,
+      originalFileName: originalFileName,
+      isPdf: isPdf,
+      originalFileType: originalFileType,
       skipChange: blurSkipImgLoad,
       suffix: 'blur',
-      preview, emit, canvasHasAlpha, setHasAlpha
+      preview: preview,
+      emit: emit,
+      canvasHasAlpha: canvasHasAlpha,
+      setHasAlpha: setHasAlpha
     })
 
     emit('blur-stroke', {
@@ -141,9 +161,10 @@ export function useBlur({
     blurPointerPosition = position
     blurLastAppliedPosition = null
 
-    try { 
-      toolCanvas.value?.setPointerCapture?.(e.pointerId) 
-    } catch (_) {}
+    // keep getting pointer events even if the pointer leaves the canvas during drawing
+    try {
+      toolCanvas.value?.setPointerCapture?.(e.pointerId)
+    } catch (error) {}
 
     emit('editing')
     pushHistory()
@@ -166,11 +187,14 @@ export function useBlur({
       return
     }
 
+    // blurFrameActive stops many animation frame calls from running at the same time
     blurFrameActive = true
 
     requestAnimationFrame(() => {
       blurFrameActive = false
-      if (!blurPointerPosition) return
+      if (!blurPointerPosition) {
+        return
+      }
       blurCursor(blurPointerPosition)
 
       if (blurPainting) {
@@ -180,7 +204,9 @@ export function useBlur({
   }
 
   function onBlurPointerUp(e) {
-    if (!blurActive.value) return
+    if (!blurActive.value) {
+      return
+    }
 
     if (blurPainting) {
       blurPainting = false
@@ -190,7 +216,7 @@ export function useBlur({
 
     try { 
       toolCanvas.value?.releasePointerCapture?.(e.pointerId)
-    } catch (_) {}
+    } catch (error) {}
   }
 
   function onBlurPointerLeave() {
@@ -208,8 +234,8 @@ export function useBlur({
   }
 
   function setupBlurWatchers() {
-    watch(blurActive, (on) => {
-      if (on) {
+    watch(blurActive, (newValue) => {
+      if (newValue) {
         blurCanvasReady = false
         blurSkipImgLoad.value = false
         nextTick(() => prepareBlurCanvas(true))
@@ -231,6 +257,7 @@ export function useBlur({
     })
   }
 
+  // saving blur reloads the image, so blurSkipImgLoad skips one canvas reset
   function handleImageLoadedBlur() {
     if (blurSkipImgLoad.value) {
       blurSkipImgLoad.value = false

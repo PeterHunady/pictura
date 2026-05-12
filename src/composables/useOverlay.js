@@ -1,3 +1,7 @@
+// Author: Peter Huňady (xhunadp00)
+// File: useOverlay.js
+// Bachelor's Thesis, VUT Brno, 2026
+
 import { ref, computed } from 'vue'
 
 export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panzoom, pdfCanvas, pdfRenderScale }) {
@@ -12,7 +16,7 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
   let activeResizeHandle = null
   const resizeStart = {}
 
-  const overlayStyle = computed(() => {
+  const overlayStyle = computed(function() {
     const scale = initialScale.value || 1
 
     return {
@@ -23,7 +27,7 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
       height: `${overlayH.value * scale}px`,
       border: '2px dashed #ff3b30',
       boxSizing: 'border-box',
-      pointerEvents: 'none',
+      pointerEvents: 'none', // let mouse events go to the canvas under it
       zIndex: 5,
     }
   })
@@ -40,20 +44,54 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     const maxWidth = maxW.value || 0
     const maxHeight = maxH.value || 0
 
-    // When maxWidth/maxHeight is at the fallback value (≤1), imgEl hasn't loaded yet —
-    // don't clamp w/h to it, use the explicitly provided dimensions as the bound instead
-    const effectiveMaxW = maxWidth > 1 ? maxWidth : (w ?? 1)
-    const effectiveMaxH = maxHeight > 1 ? maxHeight : (h ?? 1)
+    // when maxWidth or maxHeight is only a fallback value, the image is not loaded yet, so use the given size instead of limiting it
+    const effectiveMaxW = maxWidth > 1 ? maxWidth : (w || 1)
+    const effectiveMaxH = maxHeight > 1 ? maxHeight : (h || 1)
 
-    const overlayWidth = Math.max(1, Math.min(w ?? effectiveMaxW, effectiveMaxW))
-    const overlayHeight = Math.max(1, Math.min(h ?? effectiveMaxH, effectiveMaxH))
-    const clampedX = effectiveMaxW > overlayWidth ? Math.max(0, Math.min(x, effectiveMaxW - overlayWidth)) : 0
-    const clampedY = effectiveMaxH > overlayHeight ? Math.max(0, Math.min(y, effectiveMaxH - overlayHeight)) : 0
+    let overlayWidth = w || effectiveMaxW
+    if (overlayWidth < 1) {
+      overlayWidth = 1
+    }
+    if (overlayWidth > effectiveMaxW) {
+      overlayWidth = effectiveMaxW
+    }
+
+    let overlayHeight = h || effectiveMaxH
+    if (overlayHeight < 1) {
+      overlayHeight = 1
+    }
+    if (overlayHeight > effectiveMaxH) {
+      overlayHeight = effectiveMaxH
+    }
+
+    let newX = 0
+    if (effectiveMaxW > overlayWidth) {
+      newX = x
+      if (newX < 0) {
+        newX = 0
+      }
+
+      if (newX > effectiveMaxW - overlayWidth) {
+        newX = effectiveMaxW - overlayWidth
+      }
+    }
+
+    let newY = 0
+    if (effectiveMaxH > overlayHeight) {
+      newY = y
+      if (newY < 0) {
+        newY = 0
+      }
+
+      if (newY > effectiveMaxH - overlayHeight) {
+        newY = effectiveMaxH - overlayHeight
+      }
+    }
 
     overlayW.value = Math.round(overlayWidth)
     overlayH.value = Math.round(overlayHeight)
-    overlayX.value = Math.round(clampedX)
-    overlayY.value = Math.round(clampedY)
+    overlayX.value = Math.round(newX)
+    overlayY.value = Math.round(newY)
 
     emit('update:overlay', {
       width: overlayW.value,
@@ -73,6 +111,7 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     overlayVisible.value = visible
   }
 
+  // convert overlay position to PDF position, PDF starts from the bottom-left, so Y is opposite to canvas
   function getPdfOverlayBox() {
     const canvasHeight = pdfCanvas.value.height
     const scale = pdfRenderScale.value || 1
@@ -90,11 +129,17 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
     activeResizeHandle = handle
     resizeStart.rect = canvasWrapper.value.getBoundingClientRect()
 
+    // pause panzoom, so resizing does not move the canvas too
     if (panzoom && panzoom()) {
       panzoom().pause()
     }
 
-    const currentZoom = panzoom && panzoom() ? panzoom().getTransform().scale : 1
+    // combine initial scale and current zoom to convert mouse position to image pixels
+    let currentZoom = 1
+    if (panzoom && panzoom()) {
+      currentZoom = panzoom().getTransform().scale
+    }
+
     resizeStart.scale = initialScale.value * currentZoom
     resizeStart.origX = overlayX.value
     resizeStart.origY = overlayY.value
@@ -117,44 +162,80 @@ export function useOverlay({ emit, maxW, maxH, canvasWrapper, initialScale, panz
 
     const maxWidth = maxW.value || 1
     const maxHeight = maxH.value || 1
-    const MINW = 10, MINH = 10
+    const MINW = 10
+    const MINH = 10
 
     let newX = resizeStart.origX
     let newY = resizeStart.origY
     let newW = resizeStart.origW
     let newH = resizeStart.origH
 
+    // handle names like 'nw' or 'se' show which sides they change, west and north handles move the start point and change the size
     if (activeResizeHandle.includes('e')) {
-      newW = Math.max(MINW, Math.min(mouseX - resizeStart.origX, maxWidth - resizeStart.origX))
+      newW = mouseX - resizeStart.origX
+      if (newW < MINW) {
+        newW = MINW
+      }
+
+      if (newW > maxWidth - resizeStart.origX) {
+        newW = maxWidth - resizeStart.origX
+      }
     }
 
     if (activeResizeHandle.includes('s')) {
-      newH = Math.max(MINH, Math.min(mouseY - resizeStart.origY, maxHeight - resizeStart.origY))
+      newH = mouseY - resizeStart.origY
+      if (newH < MINH) {
+        newH = MINH
+      }
+
+      if (newH > maxHeight - resizeStart.origY) {
+        newH = maxHeight - resizeStart.origY
+      }
     }
 
     if (activeResizeHandle.includes('w')) {
-      newX = Math.max(0, Math.min(mouseX, resizeStart.origX + resizeStart.origW - MINW))
+      newX = mouseX
+      if (newX < 0) {
+        newX = 0
+      }
+
+      if (newX > resizeStart.origX + resizeStart.origW - MINW) {
+        newX = resizeStart.origX + resizeStart.origW - MINW
+      }
       newW = (resizeStart.origX + resizeStart.origW) - newX
     }
 
     if (activeResizeHandle.includes('n')) {
-      newY = Math.max(0, Math.min(mouseY, resizeStart.origY + resizeStart.origH - MINH))
+      newY = mouseY
+      if (newY < 0) {
+        newY = 0
+      }
+      
+      if (newY > resizeStart.origY + resizeStart.origH - MINH) {
+        newY = resizeStart.origY + resizeStart.origH - MINH
+      }
       newH = (resizeStart.origY + resizeStart.origH) - newY
     }
 
-    newX = Math.max(0, Math.min(newX, maxWidth - MINW))
-    newY = Math.max(0, Math.min(newY, maxHeight - MINH))
-    newW = Math.max(MINW, Math.min(newW, maxWidth - newX))
-    newH = Math.max(MINH, Math.min(newH, maxHeight - newY))
+    if (newX < 0) { newX = 0 }
+    if (newX > maxWidth - MINW) { newX = maxWidth - MINW }
+    if (newY < 0) { newY = 0 }
+    if (newY > maxHeight - MINH) { newY = maxHeight - MINH }
+    if (newW < MINW) { newW = MINW }
+    if (newW > maxWidth - newX) { newW = maxWidth - newX }
+    if (newH < MINH) { newH = MINH }
+    if (newH > maxHeight - newY) { newH = maxHeight - newY }
 
     overlayX.value = Math.round(newX)
     overlayY.value = Math.round(newY)
     overlayW.value = Math.round(newW)
     overlayH.value = Math.round(newH)
 
+    // check limits again, because rounding can move the edge outside the image
     if (overlayX.value + overlayW.value > maxWidth) {
       overlayW.value = maxWidth - overlayX.value
     }
+    
     if (overlayY.value + overlayH.value > maxHeight) {
       overlayH.value = maxHeight - overlayY.value
     }
