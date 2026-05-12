@@ -442,9 +442,7 @@
             maxScale.value = Math.max(minScale.value, maxDisplayScale)
         }
 
-        if (imageMeta.value) {
-            showScale.value = true
-        }
+        showScale.value = true
     }
 
     function scaleUpdate(newScale) {
